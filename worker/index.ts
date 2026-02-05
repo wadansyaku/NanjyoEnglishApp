@@ -24,6 +24,12 @@ type CommitRequest = {
   entries: CommitEntryInput[];
 };
 
+type FeedbackRequest = {
+  type: 'ocr' | 'ux' | 'bug' | 'feature';
+  message: string;
+  contextJson?: unknown;
+};
+
 const jsonResponse = (data: unknown, init: ResponseInit = {}) =>
   new Response(JSON.stringify(data), {
     ...init,
@@ -47,7 +53,9 @@ const LIMITS = {
   commitMaxEntries: 50,
   meaningMax: 80,
   exampleMax: 160,
-  noteMax: 160
+  noteMax: 160,
+  feedbackMessageMax: 200,
+  feedbackContextMax: 2000
 } as const;
 
 const bytesToHex = (bytes: Uint8Array) =>
@@ -81,6 +89,39 @@ const validateShortText = (value: string, max: number) => {
   if (hasNewline(value)) return `Newlines are not allowed (max ${max} chars).`;
   if (value.length > max) return `Must be ${max} characters or fewer.`;
   return null;
+};
+
+const validateContextJson = (value: unknown) => {
+  if (value == null) return { ok: true, json: null as string | null };
+  let json: string;
+  try {
+    json = JSON.stringify(value);
+  } catch {
+    return { ok: false, message: 'contextJson must be JSON serializable.' };
+  }
+  if (json.length > LIMITS.feedbackContextMax) {
+    return { ok: false, message: `contextJson must be ${LIMITS.feedbackContextMax} chars or fewer.` };
+  }
+  const stack: unknown[] = [value];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (typeof current === 'string') {
+      if (hasNewline(current)) {
+        return { ok: false, message: 'contextJson must not contain newlines.' };
+      }
+      if (current.length > LIMITS.feedbackMessageMax) {
+        return {
+          ok: false,
+          message: `contextJson string fields must be ${LIMITS.feedbackMessageMax} chars or fewer.`
+        };
+      }
+    } else if (Array.isArray(current)) {
+      stack.push(...current);
+    } else if (current && typeof current === 'object') {
+      stack.push(...Object.values(current as Record<string, unknown>));
+    }
+  }
+  return { ok: true, json };
 };
 
 const requireAuth = async (request: Request, env: Env): Promise<AuthContext | null> => {
@@ -367,6 +408,50 @@ const handleCommit = async (request: Request, env: Env, auth: AuthContext) => {
   return jsonResponse({ ok: true, inserted: normalizedEntries.length });
 };
 
+const handleFeedback = async (request: Request, env: Env, auth: AuthContext) => {
+  let body: FeedbackRequest;
+  try {
+    body = await request.json();
+  } catch {
+    return badRequest('Invalid JSON.');
+  }
+
+  if (!body || typeof body.message !== 'string' || typeof body.type !== 'string') {
+    return badRequest('type and message are required.');
+  }
+  const type = body.type;
+  if (!['ocr', 'ux', 'bug', 'feature'].includes(type)) {
+    return badRequest('type is invalid.');
+  }
+  const message = body.message.trim();
+  if (!message) {
+    return badRequest('message is required.');
+  }
+  const messageError = validateShortText(message, LIMITS.feedbackMessageMax);
+  if (messageError) {
+    return badRequest(messageError);
+  }
+  const contextCheck = validateContextJson(body.contextJson);
+  if (!contextCheck.ok) {
+    return badRequest(contextCheck.message ?? 'contextJson is invalid.');
+  }
+
+  const stmt = dbBind(
+    dbPrepare(
+      env.DB,
+      `INSERT INTO feedback (type, message, context_json, created_at, created_by)
+       VALUES (?1, ?2, ?3, ?4, ?5)`
+    ),
+    type,
+    message,
+    contextCheck.json,
+    Date.now(),
+    auth.userId
+  );
+  await dbRun(stmt);
+  return jsonResponse({ ok: true });
+};
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -398,6 +483,13 @@ export default {
       const auth = await requireAuth(request, env);
       if (!auth) return unauthorized();
       return handleCommit(request, env, auth);
+    }
+
+    if (url.pathname === '/api/v1/feedback') {
+      if (request.method !== 'POST') return methodNotAllowed();
+      const auth = await requireAuth(request, env);
+      if (!auth) return unauthorized();
+      return handleFeedback(request, env, auth);
     }
 
     if (url.pathname.startsWith('/api/v1/lexemes/')) {

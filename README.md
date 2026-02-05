@@ -129,6 +129,20 @@ curl -X POST http://127.0.0.1:8787/api/v1/lexemes/commit \\
 - `meaningJa` は 80 文字以内、`exampleEn` と `note` は 160 文字以内
 - 改行を含む入力は 400 で拒否
 
+## API 例（フィードバック）
+
+```bash
+curl -X POST http://127.0.0.1:8787/api/v1/feedback \\
+  -H "Authorization: Bearer <apiKey>" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "type": "ocr", "message": "OCRの改行が崩れる", "contextJson": { "screen": "/scan" } }'
+```
+
+制約:
+
+- `message` は短文のみ（200文字以内、改行禁止）
+- `contextJson` は短く（2000文字以内）、本文やOCR全文は禁止
+
 ## TODO
 
 - OCRの精度チューニング（辞書/補正）
