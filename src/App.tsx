@@ -5,6 +5,7 @@ import type { LexemeInput } from '../shared/types';
 import { runOcr } from './lib/ocr';
 import { extractCandidates } from './lib/words';
 import { speak, stopSpeaking } from './lib/tts';
+import { ensureAuth } from './lib/auth';
 import {
   addXp,
   getNextDue,
@@ -84,6 +85,9 @@ export default function App() {
     void loadState();
   }, [loadState]);
 
+  useEffect(() => {
+    void ensureAuth().catch(() => null);
+  }, []);
 
   useEffect(() => {
     if (!practiceWord && lexemeList.length > 0) {

@@ -62,6 +62,12 @@ pnpm deploy
 - ローカルDB: IndexedDB（Dexie）
 - OCR: ブラウザ内（WebWorker）で英語OCR
 
+## 認証（疑似アカウント）
+
+- 初回に `POST /api/v1/bootstrap` を呼び出し、`userId` と `apiKey` を受け取ります。
+- 以後の辞書API（`/api/v1/lexemes/*`）は `Authorization: Bearer <apiKey>` を付与して呼び出します。
+- `apiKey` は端末内に保存し、サーバ側には SHA-256 ハッシュのみ保存します。
+
 ## TODO
 
 - OCRの精度チューニング（辞書/補正）

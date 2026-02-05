@@ -3,6 +3,7 @@ import { LIMITS } from '../../shared/limits';
 import { normalizeHeadword } from '../../shared/validation';
 import type { LexemeInput } from '../../shared/types';
 import { applyReview, type ReviewResult, type SrsState } from '../lib/srs';
+import { ensureAuth } from '../lib/auth';
 
 export type Lexeme = {
   headword: string;
@@ -183,9 +184,13 @@ export const syncLexemes = async () => {
     return { synced: 0, remaining: 0 };
   }
 
-  const response = await fetch('/api/lexemes/batch', {
+  const session = await ensureAuth();
+  const response = await fetch('/api/v1/lexemes/batch', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      Authorization: `Bearer ${session.apiKey}`
+    },
     body: JSON.stringify({
       items: queued.map((item) => ({
         headword: item.headword,
