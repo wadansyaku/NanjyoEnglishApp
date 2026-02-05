@@ -68,6 +68,66 @@ pnpm deploy
 - 以後の辞書API（`/api/v1/lexemes/*`）は `Authorization: Bearer <apiKey>` を付与して呼び出します。
 - `apiKey` は端末内に保存し、サーバ側には SHA-256 ハッシュのみ保存します。
 
+## API 例（辞書）
+
+### Lookup
+
+リクエスト:
+
+```bash
+curl -X POST http://127.0.0.1:8787/api/v1/lexemes/lookup \\
+  -H "Authorization: Bearer <apiKey>" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "headwords": ["take", "run", "don\\u0027t"] }'
+```
+
+レスポンス:
+
+```json
+{
+  "found": [
+    {
+      "lexemeId": 1,
+      "headword": "take",
+      "headwordNorm": "take",
+      "entries": [
+        {
+          "meaning_ja": "取る",
+          "example_en": "I take a seat.",
+          "note": "基礎用法"
+        }
+      ]
+    }
+  ],
+  "missing": ["run", "don't"]
+}
+```
+
+### Commit
+
+リクエスト:
+
+```bash
+curl -X POST http://127.0.0.1:8787/api/v1/lexemes/commit \\
+  -H "Authorization: Bearer <apiKey>" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "entries": [ { "headword": "run", "meaningJa": "走る", "exampleEn": "I run fast." } ] }'
+```
+
+レスポンス:
+
+```json
+{
+  "ok": true,
+  "inserted": 1
+}
+```
+
+制約:
+
+- `meaningJa` は 80 文字以内、`exampleEn` と `note` は 160 文字以内
+- 改行を含む入力は 400 で拒否
+
 ## TODO
 
 - OCRの精度チューニング（辞書/補正）
