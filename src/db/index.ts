@@ -1,222 +1,201 @@
 import Dexie, { type Table } from 'dexie';
-import { LIMITS } from '../../shared/limits';
-import { normalizeHeadword } from '../../shared/validation';
-import type { LexemeInput } from '../../shared/types';
-import { applyReview, type ReviewResult, type SrsState } from '../lib/srs';
-import { ensureAuth } from '../lib/auth';
+import { applySm2, createInitialSrsState, type ReviewGrade, type SrsState } from '../lib/srs';
 
-export type Lexeme = {
+export type LexemeCache = {
+  headwordNorm: string;
   headword: string;
-  meaning: string;
-  example: string;
-  note: string;
-  createdAt: number;
+  meaningJa: string;
   updatedAt: number;
-  syncedAt?: number;
 };
 
-export type ReviewLog = {
-  id?: number;
-  headword: string;
-  result: ReviewResult;
-  timestamp: number;
+export type Deck = {
+  deckId: string;
+  title: string;
+  headwordNorms: string[];
+  createdAt: number;
 };
 
-export type OutputLog = {
-  id?: number;
-  headword: string;
-  type: 'composition' | 'recording';
-  text?: string;
-  timestamp: number;
-};
-
-export type Recording = {
-  id?: number;
-  headword: string;
-  blob: Blob;
-  timestamp: number;
-};
-
-export type SyncQueueItem = {
-  headword: string;
-  meaning: string;
-  example: string;
-  note: string;
-  queuedAt: number;
-};
-
-export type Profile = {
+export type XpState = {
   id: 'main';
-  xp: number;
+  xpTotal: number;
   level: number;
 };
 
+export type DailyXp = {
+  date: string;
+  earned: number;
+};
+
+export type DueCard = {
+  srs: SrsState;
+  lexeme: LexemeCache;
+};
+
+export type XpSummary = {
+  xpTotal: number;
+  level: number;
+  dailyEarned: number;
+  dailyLimit: number;
+  dailyRemaining: number;
+};
+
+const XP_DAILY_LIMIT = 300;
+const XP_PER_LEVEL = 100;
+
+const getDateKey = (date = new Date()) => {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+};
+
+export const normalizeHeadword = (value: string) => {
+  const lowered = value.toLowerCase();
+  const parts = lowered.match(/[a-z']+/g);
+  return parts ? parts.join('') : '';
+};
+
 class AppDB extends Dexie {
-  lexemes!: Table<Lexeme, string>;
+  lexemeCache!: Table<LexemeCache, string>;
+  decks!: Table<Deck, string>;
   srs!: Table<SrsState, string>;
-  reviewLogs!: Table<ReviewLog, number>;
-  outputs!: Table<OutputLog, number>;
-  recordings!: Table<Recording, number>;
-  syncQueue!: Table<SyncQueueItem, string>;
-  profile!: Table<Profile, 'main'>;
+  xp!: Table<XpState, 'main'>;
+  xpDaily!: Table<DailyXp, string>;
 
   constructor() {
     super('nanjyoEnglishApp');
-    this.version(1).stores({
-      lexemes: '&headword, updatedAt, syncedAt',
-      srs: '&headword, dueAt',
-      reviewLogs: '++id, headword, timestamp',
-      outputs: '++id, headword, type, timestamp',
-      recordings: '++id, headword, timestamp',
-      syncQueue: '&headword, queuedAt',
-      profile: '&id'
+    this.version(2).stores({
+      lexemeCache: '&headwordNorm, updatedAt',
+      decks: '&deckId, createdAt',
+      srs: '&cardId, deckId, dueAt, [deckId+dueAt]',
+      xp: '&id',
+      xpDaily: '&date'
     });
   }
 }
 
 export const db = new AppDB();
 
-export const saveLexemes = async (drafts: LexemeInput[]) => {
+export const createDeck = async (title: string) => {
+  const deck: Deck = {
+    deckId: crypto.randomUUID(),
+    title,
+    headwordNorms: [],
+    createdAt: Date.now()
+  };
+  await db.decks.put(deck);
+  return deck;
+};
+
+export const listDecks = async () => db.decks.orderBy('createdAt').toArray();
+
+export const getDeck = async (deckId: string) => db.decks.get(deckId);
+
+export const addLexemeToDeck = async (
+  deckId: string,
+  input: { headword: string; meaningJa: string }
+) => {
+  const headword = input.headword.trim();
+  const meaningJa = input.meaningJa.trim();
+  const headwordNorm = normalizeHeadword(headword);
+  if (!headwordNorm) return;
+
   const now = Date.now();
-  await db.transaction('rw', db.lexemes, db.srs, db.syncQueue, async () => {
-    for (const draft of drafts) {
-      const headword = normalizeHeadword(draft.headword);
-      if (!headword) continue;
-      const existing = await db.lexemes.get(headword);
-      const lexeme: Lexeme = {
-        headword,
-        meaning: draft.meaning?.trim() || existing?.meaning || '',
-        example: draft.example?.trim() || existing?.example || '',
-        note: draft.note?.trim() || existing?.note || '',
-        createdAt: existing?.createdAt ?? now,
-        updatedAt: now,
-        syncedAt: existing?.syncedAt
-      };
-      await db.lexemes.put(lexeme);
+  await db.transaction('rw', db.lexemeCache, db.decks, db.srs, async () => {
+    await db.lexemeCache.put({
+      headwordNorm,
+      headword,
+      meaningJa,
+      updatedAt: now
+    });
 
-      const existingSrs = await db.srs.get(headword);
-      if (!existingSrs) {
-        await db.srs.put({
-          headword,
-          dueAt: now,
-          intervalDays: 0,
-          ease: 2.4,
-          correctStreak: 0
-        });
-      }
+    const deck = await db.decks.get(deckId);
+    if (!deck) return;
+    const norms = new Set(deck.headwordNorms);
+    norms.add(headwordNorm);
+    await db.decks.put({ ...deck, headwordNorms: [...norms] });
 
-      await db.syncQueue.put({
-        headword,
-        meaning: lexeme.meaning,
-        example: lexeme.example,
-        note: lexeme.note,
-        queuedAt: now
-      });
+    const cardId = `${deckId}:${headwordNorm}`;
+    const existing = await db.srs.get(cardId);
+    if (!existing) {
+      await db.srs.put(createInitialSrsState(cardId, deckId, headwordNorm, now));
     }
   });
 };
 
-export const listLexemes = async () => db.lexemes.orderBy('headword').toArray();
+export const getDueCard = async (deckId: string): Promise<DueCard | null> => {
+  const now = Date.now();
+  const srs = await db.srs
+    .where('[deckId+dueAt]')
+    .between([deckId, 0], [deckId, now])
+    .first();
+  if (!srs) return null;
+  const lexeme = await db.lexemeCache.get(srs.headwordNorm);
+  if (!lexeme) return null;
+  return { srs, lexeme };
+};
 
-export const getProfile = async () => {
-  const profile = await db.profile.get('main');
-  if (profile) return profile;
-  const initial = { id: 'main', xp: 0, level: 1 } satisfies Profile;
-  await db.profile.put(initial);
+const getOrCreateXp = async () => {
+  const current = await db.xp.get('main');
+  if (current) return current;
+  const initial: XpState = { id: 'main', xpTotal: 0, level: 1 };
+  await db.xp.put(initial);
   return initial;
 };
 
-const XP_STEP = 120;
+const getOrCreateDailyXp = async (dateKey: string) => {
+  const current = await db.xpDaily.get(dateKey);
+  if (current) return current;
+  const initial: DailyXp = { date: dateKey, earned: 0 };
+  await db.xpDaily.put(initial);
+  return initial;
+};
 
-export const addXp = async (amount: number) => {
-  const profile = await getProfile();
-  const xp = Math.max(0, profile.xp + amount);
-  const level = Math.floor(xp / XP_STEP) + 1;
-  const updated = { ...profile, xp, level };
-  await db.profile.put(updated);
-  return {
-    ...updated,
-    progress: xp % XP_STEP,
-    next: XP_STEP
+const awardXp = async (grade: ReviewGrade, wasDue: boolean) => {
+  if (!wasDue) return;
+  const gradeXp: Record<ReviewGrade, number> = {
+    again: 0,
+    hard: 1,
+    good: 2,
+    easy: 3
   };
+  const base = gradeXp[grade];
+  if (base <= 0) return;
+  const dateKey = getDateKey();
+
+  await db.transaction('rw', db.xp, db.xpDaily, async () => {
+    const xpState = await getOrCreateXp();
+    const daily = await getOrCreateDailyXp(dateKey);
+    const remaining = Math.max(0, XP_DAILY_LIMIT - daily.earned);
+    const granted = Math.min(base, remaining);
+    if (granted <= 0) return;
+    const xpTotal = xpState.xpTotal + granted;
+    const level = Math.floor(xpTotal / XP_PER_LEVEL) + 1;
+    await db.xp.put({ ...xpState, xpTotal, level });
+    await db.xpDaily.put({ ...daily, earned: daily.earned + granted });
+  });
 };
 
-export const getNextDue = async () => {
+export const reviewCard = async (deckId: string, cardId: string, grade: ReviewGrade) => {
   const now = Date.now();
-  const next = await db.srs.where('dueAt').belowOrEqual(now).first();
-  if (!next) return null;
-  const lexeme = await db.lexemes.get(next.headword);
-  if (!lexeme) return null;
-  return { lexeme, srs: next };
-};
-
-export const recordReview = async (headword: string, result: ReviewResult) => {
-  const state = await db.srs.get(headword);
-  if (!state) return null;
-  const now = Date.now();
-  const updated = applyReview(state, result, now);
-  await db.transaction('rw', db.srs, db.reviewLogs, async () => {
+  await db.transaction('rw', db.srs, db.xp, db.xpDaily, async () => {
+    const state = await db.srs.get(cardId);
+    if (!state || state.deckId !== deckId) return;
+    const updated = applySm2(state, grade, now);
     await db.srs.put(updated);
-    await db.reviewLogs.add({ headword, result, timestamp: now });
+    await awardXp(grade, now >= state.dueAt);
   });
-
-  const xp = result === 'again' ? 2 : result === 'good' ? 10 : 15;
-  await addXp(xp);
-  return updated;
 };
 
-export const saveComposition = async (headword: string, text: string) => {
-  const now = Date.now();
-  await db.outputs.add({ headword, type: 'composition', text, timestamp: now });
-  await addXp(8);
-};
-
-export const saveRecording = async (headword: string, blob: Blob) => {
-  const now = Date.now();
-  await db.recordings.add({ headword, blob, timestamp: now });
-  await db.outputs.add({ headword, type: 'recording', timestamp: now });
-  await addXp(12);
-};
-
-export const syncLexemes = async () => {
-  const queued = await db.syncQueue.orderBy('queuedAt').limit(LIMITS.batchMaxItems).toArray();
-  if (queued.length === 0) {
-    return { synced: 0, remaining: 0 };
-  }
-
-  const session = await ensureAuth();
-  const response = await fetch('/api/v1/lexemes/batch', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      Authorization: `Bearer ${session.apiKey}`
-    },
-    body: JSON.stringify({
-      items: queued.map((item) => ({
-        headword: item.headword,
-        meaning: item.meaning,
-        example: item.example,
-        note: item.note
-      }))
-    })
-  });
-
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(message || 'Failed to sync.');
-  }
-
-  const now = Date.now();
-  await db.transaction('rw', db.lexemes, db.syncQueue, async () => {
-    for (const item of queued) {
-      const lexeme = await db.lexemes.get(item.headword);
-      if (lexeme) {
-        await db.lexemes.put({ ...lexeme, syncedAt: now });
-      }
-      await db.syncQueue.delete(item.headword);
-    }
-  });
-
-  const remaining = await db.syncQueue.count();
-  return { synced: queued.length, remaining };
+export const getXpSummary = async (): Promise<XpSummary> => {
+  const xpState = await getOrCreateXp();
+  const daily = await getOrCreateDailyXp(getDateKey());
+  const remaining = Math.max(0, XP_DAILY_LIMIT - daily.earned);
+  return {
+    xpTotal: xpState.xpTotal,
+    level: xpState.level,
+    dailyEarned: daily.earned,
+    dailyLimit: XP_DAILY_LIMIT,
+    dailyRemaining: remaining
+  };
 };

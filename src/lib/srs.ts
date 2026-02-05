@@ -1,48 +1,84 @@
-export type ReviewResult = 'again' | 'good' | 'easy';
+export type ReviewGrade = 'again' | 'hard' | 'good' | 'easy';
 
 export type SrsState = {
-  headword: string;
+  cardId: string;
+  deckId: string;
+  headwordNorm: string;
   dueAt: number;
-  intervalDays: number;
+  interval: number;
   ease: number;
-  correctStreak: number;
+  lapses: number;
+  reps: number;
   lastReviewedAt?: number;
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const AGAIN_DELAY_MS = 10 * 60 * 1000;
 
-export const applyReview = (state: SrsState, result: ReviewResult, now = Date.now()): SrsState => {
-  let ease = state.ease || 2.4;
-  let intervalDays = state.intervalDays || 0;
-  let correctStreak = state.correctStreak || 0;
-  let dueAt = now;
+const gradeToQuality: Record<ReviewGrade, number> = {
+  again: 0,
+  hard: 3,
+  good: 4,
+  easy: 5
+};
 
-  if (result === 'again') {
+export const createInitialSrsState = (
+  cardId: string,
+  deckId: string,
+  headwordNorm: string,
+  now = Date.now()
+): SrsState => ({
+  cardId,
+  deckId,
+  headwordNorm,
+  dueAt: now,
+  interval: 0,
+  ease: 2.5,
+  lapses: 0,
+  reps: 0
+});
+
+export const applySm2 = (state: SrsState, grade: ReviewGrade, now = Date.now()): SrsState => {
+  const quality = gradeToQuality[grade];
+  let { interval, ease, lapses, reps } = state;
+
+  if (quality < 3) {
+    lapses += 1;
+    reps = 0;
+    interval = 1;
     ease = Math.max(1.3, ease - 0.2);
-    intervalDays = 0;
-    correctStreak = 0;
-    dueAt = now + 5 * 60 * 1000;
+    return {
+      ...state,
+      interval,
+      ease,
+      lapses,
+      reps,
+      dueAt: now + AGAIN_DELAY_MS,
+      lastReviewedAt: now
+    };
   }
 
-  if (result === 'good') {
-    intervalDays = intervalDays === 0 ? 1 : Math.round(intervalDays * ease);
-    correctStreak += 1;
-    dueAt = now + intervalDays * DAY_MS;
+  const newEase =
+    ease + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02));
+  ease = Math.max(1.3, newEase);
+
+  if (reps === 0) {
+    interval = 1;
+  } else if (reps === 1) {
+    interval = 6;
+  } else {
+    interval = Math.max(1, Math.round(interval * ease));
   }
 
-  if (result === 'easy') {
-    ease = Math.min(2.8, ease + 0.15);
-    intervalDays = intervalDays === 0 ? 2 : Math.round(intervalDays * (ease + 0.15));
-    correctStreak += 1;
-    dueAt = now + intervalDays * DAY_MS;
-  }
+  reps += 1;
 
   return {
     ...state,
+    interval,
     ease,
-    intervalDays,
-    correctStreak,
-    lastReviewedAt: now,
-    dueAt
+    lapses,
+    reps,
+    dueAt: now + interval * DAY_MS,
+    lastReviewedAt: now
   };
 };
