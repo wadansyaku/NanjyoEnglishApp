@@ -9,6 +9,7 @@
 - meaning/example/note は **改行禁止・短文のみ**。APIで長文や改行は拒否します。
 - SRSの回答ログは **端末内（IndexedDB）** にのみ保存します。
 - PWAは local-first。オフラインでもSRSが動作します。
+- （再掲）本文画像やOCR全文はクラウドに送信しません。
 
 ## 開発手順
 
