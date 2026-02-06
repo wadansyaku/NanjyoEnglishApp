@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from '../lib/router';
-import { getDeck, getDueCard, reviewCard, type DueCard } from '../db';
+import { getDeck, getDueCard, incrementEvent, reviewCard, type DueCard } from '../db';
 
 const gradeLabels = [
   { key: 'again', label: 'Again', xp: 0 },
@@ -41,6 +41,7 @@ export default function ReviewPage({ deckId }: ReviewPageProps) {
   const handleReview = async (grade: 'again' | 'hard' | 'good' | 'easy') => {
     if (!dueCard || !deckIdValue) return;
     await reviewCard(deckIdValue, dueCard.srs.cardId, grade);
+    await incrementEvent('review_done');
     setShowAnswer(false);
     setStatus('レビューを記録しました。');
     await load();

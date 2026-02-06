@@ -38,6 +38,19 @@ nav .pill {
   text-decoration: none;
 }
 
+button.pill {
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  background: rgba(56, 189, 248, 0.15);
+  color: #bae6fd;
+  padding: 6px 12px;
+  font-weight: 600;
+}
+
+button.pill:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+}
+
 header h1 {
   margin: 0;
   font-size: clamp(1.8rem, 2.5vw, 2.6rem);

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getXpSummary, type XpSummary } from '../db';
+import { getXpSummary, listEventCounters, type EventCounter, type XpSummary } from '../db';
 
 const getTitleForLevel = (level: number) => {
   if (level >= 15) return '語彙マスター';
@@ -10,10 +10,13 @@ const getTitleForLevel = (level: number) => {
 
 export default function CharacterPage() {
   const [summary, setSummary] = useState<XpSummary | null>(null);
+  const [counters, setCounters] = useState<EventCounter[]>([]);
 
   const load = async () => {
     const data = await getXpSummary();
+    const events = await listEventCounters();
     setSummary(data);
+    setCounters(events);
   };
 
   useEffect(() => {
@@ -42,6 +45,20 @@ export default function CharacterPage() {
           今日のXP: {summary.dailyEarned}/{summary.dailyLimit}
         </p>
         <p>残り獲得可能: {summary.dailyRemaining} XP</p>
+      </div>
+      <div className="card">
+        <h2>ローカルイベント</h2>
+        {counters.length === 0 && <p>まだイベントがありません。</p>}
+        {counters.length > 0 && (
+          <div className="word-grid">
+            {counters.map((counter) => (
+              <div key={counter.name} className="word-item">
+                <span>{counter.name}</span>
+                <strong>{counter.count}</strong>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </section>
   );

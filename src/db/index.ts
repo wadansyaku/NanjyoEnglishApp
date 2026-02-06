@@ -26,6 +26,12 @@ export type DailyXp = {
   earned: number;
 };
 
+export type EventCounter = {
+  name: string;
+  count: number;
+  updatedAt: number;
+};
+
 export type DueCard = {
   srs: SrsState;
   lexeme: LexemeCache;
@@ -61,15 +67,17 @@ class AppDB extends Dexie {
   srs!: Table<SrsState, string>;
   xp!: Table<XpState, 'main'>;
   xpDaily!: Table<DailyXp, string>;
+  eventCounters!: Table<EventCounter, string>;
 
   constructor() {
     super('nanjyoEnglishApp');
-    this.version(2).stores({
+    this.version(3).stores({
       lexemeCache: '&headwordNorm, updatedAt',
       decks: '&deckId, createdAt',
       srs: '&cardId, deckId, dueAt, [deckId+dueAt]',
       xp: '&id',
-      xpDaily: '&date'
+      xpDaily: '&date',
+      eventCounters: '&name, updatedAt'
     });
   }
 }
@@ -178,7 +186,7 @@ const awardXp = async (grade: ReviewGrade, wasDue: boolean) => {
 
 export const reviewCard = async (deckId: string, cardId: string, grade: ReviewGrade) => {
   const now = Date.now();
-  await db.transaction('rw', db.srs, db.xp, db.xpDaily, async () => {
+  await db.transaction('rw', db.srs, db.xp, db.xpDaily, db.eventCounters, async () => {
     const state = await db.srs.get(cardId);
     if (!state || state.deckId !== deckId) return;
     const updated = applySm2(state, grade, now);
@@ -199,3 +207,22 @@ export const getXpSummary = async (): Promise<XpSummary> => {
     dailyRemaining: remaining
   };
 };
+
+export const incrementEvent = async (name: string) => {
+  const now = Date.now();
+  await db.transaction('rw', db.eventCounters, async () => {
+    const current = await db.eventCounters.get(name);
+    if (current) {
+      await db.eventCounters.put({
+        ...current,
+        count: current.count + 1,
+        updatedAt: now
+      });
+      return;
+    }
+    await db.eventCounters.put({ name, count: 1, updatedAt: now });
+  });
+};
+
+export const listEventCounters = async () =>
+  db.eventCounters.orderBy('updatedAt').reverse().toArray();

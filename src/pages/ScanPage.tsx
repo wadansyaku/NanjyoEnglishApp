@@ -6,6 +6,7 @@ import { ensureAuth } from '../lib/auth';
 import {
   addLexemeToDeck,
   createDeck,
+  incrementEvent,
   listDecks,
   normalizeHeadword,
   type Deck
@@ -48,6 +49,7 @@ export default function ScanPage() {
   }, [loadDecks]);
 
   const handleImage = async (file: File) => {
+    await incrementEvent('scan_started');
     setOcrStatus('running');
     setOcrError('');
     setLookupStatus('idle');
@@ -56,6 +58,7 @@ export default function ScanPage() {
       const text = await runOcr(file);
       setOcrText(text);
       setOcrStatus('done');
+      await incrementEvent('ocr_done');
     } catch (error) {
       setOcrStatus('error');
       setOcrError((error as Error).message);
@@ -196,6 +199,7 @@ export default function ScanPage() {
       }
     }
 
+    await incrementEvent('deck_created');
     setStatus('デッキを作成しました。レビューに移動します。');
     window.history.pushState({}, '', `/review/${deck.deckId}`);
     window.dispatchEvent(new PopStateEvent('popstate'));
