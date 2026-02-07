@@ -469,6 +469,10 @@ button:disabled {
   margin-bottom: 10px;
 }
 
+.candidate-item input[type='text'] + input[type='text'] {
+  margin-top: 8px;
+}
+
 .candidate-row {
   display: flex;
   justify-content: space-between;
@@ -499,6 +503,21 @@ button:disabled {
   margin-top: 4px;
   font-size: 0.78rem;
   color: var(--text-muted);
+}
+
+.candidate-cut-button {
+  width: auto;
+  min-width: 92px;
+  min-height: 40px;
+  padding: 8px 14px;
+  border-radius: 12px;
+}
+
+.cut-candidate-box {
+  border: 1px dashed var(--border-medium);
+  border-radius: 14px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.75);
 }
 
 /* ========================================

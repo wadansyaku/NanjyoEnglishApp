@@ -13,6 +13,7 @@ import {
 } from '../db';
 
 type Candidate = {
+  id: string;
   headword: string;
   headwordNorm: string;
   count: number;
@@ -84,11 +85,12 @@ export default function ScanPage() {
     async (text: string) => {
       const extracted = extractCandidates(text).slice(0, MAX_CANDIDATES);
       const prevMap = new Map(candidates.map((item) => [item.headwordNorm, item]));
-      const base: Candidate[] = extracted.map((item) => {
+      const base: Candidate[] = extracted.map((item, index) => {
         const headword = item.word;
         const headwordNorm = normalizeHeadword(headword);
         const prev = prevMap.get(headwordNorm);
         return {
+          id: prev?.id ?? `${headwordNorm}:${item.word}:${index}`,
           headword,
           headwordNorm,
           count: item.count,
@@ -153,18 +155,35 @@ export default function ScanPage() {
     await extractFromText(ocrText);
   };
 
-  const toggleCandidate = (headwordNorm: string) => {
+  const toggleCandidate = (candidateId: string) => {
     setCandidates((prev) =>
       prev.map((item) =>
-        item.headwordNorm === headwordNorm ? { ...item, selected: !item.selected } : item
+        item.id === candidateId ? { ...item, selected: !item.selected } : item
       )
     );
   };
 
-  const updateMeaning = (headwordNorm: string, meaning: string) => {
+  const updateHeadword = (candidateId: string, headword: string) => {
+    const nextHeadword = safeTrim(headword);
+    setCandidates((prev) =>
+      prev.map((item) => {
+        if (item.id !== candidateId) return item;
+        const nextHeadwordNorm = normalizeHeadword(nextHeadword);
+        const source = nextHeadwordNorm !== item.headwordNorm ? 'missing' : item.source;
+        return {
+          ...item,
+          headword: nextHeadword,
+          headwordNorm: nextHeadwordNorm,
+          source
+        };
+      })
+    );
+  };
+
+  const updateMeaning = (candidateId: string, meaning: string) => {
     setCandidates((prev) =>
       prev.map((item) =>
-        item.headwordNorm === headwordNorm
+        item.id === candidateId
           ? { ...item, meaning: safeTrim(meaning), source: 'missing' }
           : item
       )
@@ -175,11 +194,17 @@ export default function ScanPage() {
     () => candidates.filter((item) => item.selected),
     [candidates]
   );
+  const cutCandidates = useMemo(
+    () => candidates.filter((item) => !item.selected),
+    [candidates]
+  );
 
   const canCreateDeck = useMemo(() => {
     if (!deckTitle.trim()) return false;
     if (selectedCandidates.length === 0) return false;
-    return selectedCandidates.every((item) => item.meaning.trim().length > 0);
+    return selectedCandidates.every(
+      (item) => item.headwordNorm.length > 0 && item.meaning.trim().length > 0
+    );
   }, [deckTitle, selectedCandidates]);
 
   const handleCreateDeck = async () => {
@@ -194,9 +219,18 @@ export default function ScanPage() {
       });
     }
 
-    const commitEntries = selectedCandidates
-      .filter((item) => item.source === 'missing')
-      .map((item) => ({ headword: item.headword, meaningJa: item.meaning }));
+    const commitEntriesMap = new Map<string, { headword: string; meaningJa: string }>();
+    selectedCandidates
+      .filter((item) => item.source === 'missing' && item.headwordNorm.length > 0)
+      .forEach((item) => {
+        if (!commitEntriesMap.has(item.headwordNorm)) {
+          commitEntriesMap.set(item.headwordNorm, {
+            headword: item.headword,
+            meaningJa: item.meaning
+          });
+        }
+      });
+    const commitEntries = [...commitEntriesMap.values()];
 
     if (commitEntries.length > 0) {
       try {
@@ -260,37 +294,69 @@ export default function ScanPage() {
         </p>
         <p className="badge">意味検索: {lookupStatusLabel[lookupStatus]}</p>
         {lookupError && <p className="counter">{lookupError}</p>}
-        <p className="counter">選択中: {selectedCandidates.length}語</p>
+        <p className="counter">追加予定: {selectedCandidates.length}語</p>
         <div className="word-grid candidate-grid">
-          {candidates.map((item) => (
-            <div key={item.headwordNorm} className="word-item candidate-item">
+          {selectedCandidates.map((item) => (
+            <div key={item.id} className="word-item candidate-item">
               <div className="candidate-row">
-                <label className="candidate-toggle">
-                  <input
-                    type="checkbox"
-                    checked={item.selected}
-                    onChange={() => toggleCandidate(item.headwordNorm)}
-                  />
-                  <span>追加する</span>
-                </label>
                 <div>
-                  <strong>{item.headword}</strong>
+                  <strong>単語</strong>
                   <small className="candidate-meta">出現 {item.count}回</small>
                 </div>
+                <button
+                  className="secondary candidate-cut-button"
+                  type="button"
+                  onClick={() => toggleCandidate(item.id)}
+                >
+                  カット
+                </button>
               </div>
+              <input
+                type="text"
+                value={item.headword}
+                placeholder="単語を修正"
+                onChange={(event) => updateHeadword(item.id, event.target.value)}
+              />
+              {item.headwordNorm.length === 0 && (
+                <div className="counter">単語を英字で入力してください</div>
+              )}
               <input
                 type="text"
                 value={item.meaning}
                 placeholder={item.source === 'found' ? '辞書の意味（必要なら直せる）' : '意味を入力'}
                 maxLength={LIMITS.meaning}
-                onChange={(event) => updateMeaning(item.headwordNorm, event.target.value)}
+                onChange={(event) => updateMeaning(item.id, event.target.value)}
               />
-              {item.source === 'missing' && item.meaning.length === 0 && (
+              {item.meaning.length === 0 && (
                 <div className="counter">意味を入れてください</div>
               )}
             </div>
           ))}
-          {candidates.length === 0 && <p>まだ候補がありません。上で「単語をひろう」を押してね。</p>}
+          {selectedCandidates.length === 0 && (
+            <p>追加予定の候補がありません。上で「単語をひろう」を押してね。</p>
+          )}
+          {cutCandidates.length > 0 && (
+            <div className="cut-candidate-box">
+              <p className="counter">カット中: {cutCandidates.length}語</p>
+              <div className="word-grid">
+                {cutCandidates.map((item) => (
+                  <div key={item.id} className="word-item">
+                    <div>
+                      <strong>{item.headword}</strong>
+                      <small className="candidate-meta">出現 {item.count}回</small>
+                    </div>
+                    <button
+                      className="secondary candidate-cut-button"
+                      type="button"
+                      onClick={() => toggleCandidate(item.id)}
+                    >
+                      追加する
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
