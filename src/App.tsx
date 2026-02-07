@@ -70,17 +70,17 @@ export default function App() {
         <p>写真から単語を見つけて、自分だけの単語ノートで復習しよう。</p>
         <nav className="pill-group">
           <Link className="pill" to="/scan">
-            写真で単語
+            📷 写真で単語
           </Link>
           <Link className="pill" to="/character">
-            がんばり記録
+            ⭐ がんばり記録
           </Link>
           <button
             className="pill"
             type="button"
             onClick={() => setFeedbackOpen((prev) => !prev)}
           >
-            アプリに意見
+            💬 アプリに意見
           </button>
         </nav>
       </header>
