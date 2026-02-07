@@ -11,7 +11,7 @@ import {
 
 const gradeLabels = [
   { key: 'again', label: 'もう一回', xp: 0, emoji: '🔄' },
-  { key: 'hard', label: 'むずい', xp: 1, emoji: '😓' },
+  { key: 'hard', label: '難しい', xp: 1, emoji: '😓' },
   { key: 'good', label: 'できた！', xp: 2, emoji: '😊' },
   { key: 'easy', label: 'かんたん', xp: 3, emoji: '🌟' }
 ] as const;

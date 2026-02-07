@@ -298,6 +298,25 @@ export const incrementEvent = async (name: string) => {
 export const listEventCounters = async () =>
   db.eventCounters.orderBy('updatedAt').reverse().toArray();
 
+export const getWeeklyXpHistory = async (): Promise<DailyXp[]> => {
+  const history: DailyXp[] = [];
+  const today = new Date();
+
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const key = `${yyyy}-${mm}-${dd}`;
+
+    const record = await db.xpDaily.get(key);
+    history.push(record || { date: key, earned: 0 });
+  }
+
+  return history;
+};
+
 /**
  * Quick Review用: 苦手な単語・期限切れの単語を最大limit件取得
  * ペルソナ「莉乃」の「今日の3分」モード用

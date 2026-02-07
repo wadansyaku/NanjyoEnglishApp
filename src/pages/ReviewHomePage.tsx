@@ -129,7 +129,7 @@ export default function ReviewHomePage() {
                     🔄 もう一回
                   </button>
                   <button className="secondary" onClick={() => handleGrade('hard')}>
-                    😓 むずい
+                    😓 難しい
                   </button>
                   <button onClick={() => handleGrade('good')}>
                     😊 できた

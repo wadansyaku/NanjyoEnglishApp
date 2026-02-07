@@ -4,8 +4,10 @@ import {
   listEventCounters,
   getXpToNextLevel,
   getXpRequiredForLevel,
+  getWeeklyXpHistory,
   type EventCounter,
-  type XpSummary
+  type XpSummary,
+  type DailyXp
 } from '../db';
 
 const getTitleForLevel = (level: number) => {
@@ -16,7 +18,12 @@ const getTitleForLevel = (level: number) => {
   return 'はじめの一歩 🌱';
 };
 
-const getMascotMessage = (level: number, dailyEarned: number) => {
+const getMascotMessage = (level: number, dailyEarned: number, diffFromYesterday: number) => {
+  // 成長実感メッセージを優先
+  if (dailyEarned > 0 && diffFromYesterday > 0) {
+    return `昨日より +${diffFromYesterday}pt も成長してるよ！すごい！`;
+  }
+
   // 日替わり + 状態に応じたメッセージ
   const messages = {
     greeting: [
@@ -58,35 +65,46 @@ const eventLabelMap: Record<string, { label: string; icon: string }> = {
 export default function CharacterPage() {
   const [summary, setSummary] = useState<XpSummary | null>(null);
   const [counters, setCounters] = useState<EventCounter[]>([]);
+  const [history, setHistory] = useState<DailyXp[]>([]);
+
+  useEffect(() => {
+    const loadData = async () => {
+      const s = await getXpSummary();
+      const c = await listEventCounters();
+      const h = await getWeeklyXpHistory();
+      setSummary(s);
+      setCounters(c);
+      setHistory(h);
+    };
+    void loadData();
+  }, []);
   const [xpProgress, setXpProgress] = useState({ current: 0, required: 100, progress: 0 });
 
   const load = async () => {
-    const data = await getXpSummary();
-    const events = await listEventCounters();
-    const progress = getXpToNextLevel(data.xpTotal);
-    setSummary(data);
-    setCounters(events);
-    setXpProgress(progress);
+    const s = await getXpSummary();
+    const c = await listEventCounters();
+    const h = await getWeeklyXpHistory();
+    const next = getXpToNextLevel(s.xpTotal);
+
+    setSummary(s);
+    setCounters(c);
+    setHistory(h);
+    setXpProgress(next);
   };
 
   useEffect(() => {
     void load();
   }, []);
 
-  if (!summary) {
-    return (
-      <section className="section-grid">
-        <div className="card">
-          <h2>自分の記録</h2>
-          <p>読み込み中...</p>
-        </div>
-      </section>
-    );
-  }
+  if (!summary) return <div>Loading...</div>;
 
-  const dailyProgress = summary.dailyLimit > 0
-    ? (summary.dailyEarned / summary.dailyLimit) * 100
-    : 0;
+  // 昨日のXPとの差分
+  const todayEarned = history[6]?.earned || 0;
+  const yesterdayEarned = history[5]?.earned || 0;
+  const diffFromYesterday = todayEarned - yesterdayEarned;
+
+  // グラフ用: 最大値（最低50pt）
+  const maxVal = Math.max(...history.map(h => h.earned), 50);
 
   return (
     <section className="section-grid">
@@ -101,7 +119,7 @@ export default function CharacterPage() {
             className="mascot"
           />
           <div className="mascot-speech">
-            「{getMascotMessage(summary.level, summary.dailyEarned)}」
+            「{getMascotMessage(summary.level, summary.dailyEarned, diffFromYesterday)}」
           </div>
         </div>
 
@@ -119,16 +137,13 @@ export default function CharacterPage() {
         <div className="xp-bar-container">
           <div className="xp-bar-label">
             <span>次のレベルまで</span>
-            <span>あと {xpProgress.required - xpProgress.current} ポイント</span>
+            <span>{xpProgress.current} / {xpProgress.required} pt</span>
           </div>
           <div className="xp-bar">
             <div
               className="xp-bar-fill"
-              style={{ width: `${Math.min(xpProgress.progress * 100, 100)}%` }}
+              style={{ width: `${xpProgress.progress * 100}%` }}
             />
-          </div>
-          <div className="xp-bar-detail">
-            <span>{xpProgress.current} / {xpProgress.required}</span>
           </div>
         </div>
 
@@ -142,7 +157,7 @@ export default function CharacterPage() {
             <div
               className="xp-bar-fill"
               style={{
-                width: `${Math.min(dailyProgress, 100)}%`,
+                width: `${Math.min(summary.dailyEarned / summary.dailyLimit * 100, 100)}%`,
                 background: 'linear-gradient(90deg, #95D5B2, #8ECAE6)'
               }}
             />
@@ -153,13 +168,75 @@ export default function CharacterPage() {
         <div className="stats-grid">
           <div className="stat-item">
             <span className="stat-value">{summary.xpTotal}</span>
-            <span className="stat-label">累計ポイント</span>
+            <span className="stat-label">累計pt</span>
           </div>
           <div className="stat-item">
-            <span className="stat-value">{summary.dailyRemaining}</span>
-            <span className="stat-label">今日の残り</span>
+            <span className="stat-value">{summary.dailyEarned}</span>
+            <span className="stat-label">今日</span>
           </div>
         </div>
+
+        {/* 週間グラフ */}
+        {history.length > 0 && (
+          <div style={{ marginTop: 24, padding: '16px 0 0', borderTop: '1px solid var(--border)' }}>
+            <h3 style={{ fontSize: '1rem', marginBottom: 16 }}>📊 今週の成長</h3>
+            <div style={{
+              display: 'flex',
+              alignItems: 'flex-end',
+              justifyContent: 'space-between',
+              height: 120,
+              paddingTop: 20
+            }}>
+              {history.map((day, i) => {
+                const height = Math.min(100, (day.earned / maxVal) * 100);
+                const date = new Date(day.date);
+                const label = date.toLocaleDateString('ja-JP', { weekday: 'short' });
+                const isToday = i === 6;
+
+                return (
+                  <div key={day.date} style={{
+                    flex: 1,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: 4
+                  }}>
+                    <div style={{
+                      width: '60%',
+                      height: '100%',
+                      display: 'flex',
+                      alignItems: 'flex-end',
+                      position: 'relative'
+                    }}>
+                      <div style={{
+                        width: '100%',
+                        height: `${Math.max(height, 5)}%`, // 最低5%の高さ
+                        background: isToday ? 'var(--primary)' : 'rgba(0,0,0,0.1)',
+                        borderRadius: '4px 4px 0 0',
+                        transition: 'height 0.3s ease'
+                      }}></div>
+                      {day.earned > 0 && (
+                        <span style={{
+                          position: 'absolute',
+                          bottom: `${Math.max(height, 5) + 5}%`,
+                          left: '50%',
+                          transform: 'translateX(-50%)',
+                          fontSize: '0.65rem',
+                          color: '#666'
+                        }}>{day.earned}</span>
+                      )}
+                    </div>
+                    <span style={{
+                      fontSize: '0.7rem',
+                      fontWeight: isToday ? 'bold' : 'normal',
+                      color: isToday ? 'var(--primary)' : '#888'
+                    }}>{label}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Level Milestones */}
         <details className="level-milestones">
