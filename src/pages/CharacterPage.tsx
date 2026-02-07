@@ -9,11 +9,10 @@ import {
 } from '../db';
 
 const getTitleForLevel = (level: number) => {
-  if (level >= 20) return '伝説の学習者 🏆';
-  if (level >= 15) return '英語マスター 👑';
-  if (level >= 10) return 'ぐんぐんチャレンジャー 🚀';
-  if (level >= 5) return '単語トレーナー 💪';
-  return 'はじめの一歩 🌱';
+  if (level >= 15) return 'ことばクイーン';
+  if (level >= 10) return 'ぐんぐんチャレンジャー';
+  if (level >= 5) return 'ことばトレーナー';
+  return 'はじめの一歩';
 };
 
 const getMascotMessage = (level: number, dailyEarned: number) => {
@@ -50,8 +49,8 @@ const getMascotMessage = (level: number, dailyEarned: number) => {
 
 const eventLabelMap: Record<string, { label: string; icon: string }> = {
   scan_started: { label: '写真読み取りを開始', icon: '📷' },
-  ocr_done: { label: '文字認識完了', icon: '✅' },
-  deck_created: { label: '単語帳を作成', icon: '📓' },
+  ocr_done: { label: '読み取り完了', icon: '✅' },
+  deck_created: { label: '単語ノートを作成', icon: '📓' },
   review_done: { label: '復習カードに回答', icon: '⭐' }
 };
 
@@ -107,7 +106,7 @@ export default function CharacterPage() {
 
         {/* Title Badge */}
         <div className="title-badge">
-          <span>{getTitleForLevel(summary.level)}</span>
+          <span>称号: {getTitleForLevel(summary.level)}</span>
         </div>
 
         {/* Level Display */}
@@ -135,7 +134,7 @@ export default function CharacterPage() {
         {/* Daily XP Progress */}
         <div className="xp-bar-container" style={{ marginTop: 16 }}>
           <div className="xp-bar-label">
-            <span>今日のポイント</span>
+            <span>今日のXP</span>
             <span>{summary.dailyEarned} / {summary.dailyLimit}</span>
           </div>
           <div className="xp-bar">
@@ -153,11 +152,11 @@ export default function CharacterPage() {
         <div className="stats-grid">
           <div className="stat-item">
             <span className="stat-value">{summary.xpTotal}</span>
-            <span className="stat-label">累計ポイント</span>
+            <span className="stat-label">トータルXP</span>
           </div>
           <div className="stat-item">
             <span className="stat-value">{summary.dailyRemaining}</span>
-            <span className="stat-label">今日の残り</span>
+            <span className="stat-label">今日あともらえるXP</span>
           </div>
         </div>
 
@@ -168,17 +167,17 @@ export default function CharacterPage() {
             <div className="milestone-item">
               <span>Lv.5</span>
               <span>{getXpRequiredForLevel(5)} pt〜</span>
-              <span>単語トレーナー 💪</span>
+              <span>ことばトレーナー</span>
             </div>
             <div className="milestone-item">
               <span>Lv.10</span>
               <span>{getXpRequiredForLevel(10)} pt〜</span>
-              <span>チャレンジャー 🚀</span>
+              <span>ぐんぐんチャレンジャー</span>
             </div>
             <div className="milestone-item">
               <span>Lv.15</span>
               <span>{getXpRequiredForLevel(15)} pt〜</span>
-              <span>英語マスター 👑</span>
+              <span>ことばクイーン</span>
             </div>
           </div>
         </details>
