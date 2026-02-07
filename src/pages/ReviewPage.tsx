@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from '../lib/router';
-import { getDeck, getDueCard, incrementEvent, reviewCard, type DueCard } from '../db';
+import {
+  getDeck,
+  getDueCard,
+  getDueCount,
+  incrementEvent,
+  reviewCard,
+  type DueCard
+} from '../db';
 
 const gradeLabels = [
   { key: 'again', label: 'もう1回', xp: 0, emoji: '🔄' },
@@ -11,11 +18,13 @@ const gradeLabels = [
 
 type ReviewPageProps = {
   deckId: string;
+  showToast?: (message: string, type?: 'info' | 'success' | 'error') => void;
 };
 
-export default function ReviewPage({ deckId }: ReviewPageProps) {
+export default function ReviewPage({ deckId, showToast }: ReviewPageProps) {
   const [deckTitle, setDeckTitle] = useState('');
   const [dueCard, setDueCard] = useState<DueCard | null>(null);
+  const [dueCount, setDueCount] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
   const [status, setStatus] = useState('');
 
@@ -32,6 +41,8 @@ export default function ReviewPage({ deckId }: ReviewPageProps) {
     setDeckTitle(deck.title);
     const card = await getDueCard(deckIdValue);
     setDueCard(card);
+    const count = await getDueCount(deckIdValue);
+    setDueCount(count);
   }, [deckIdValue]);
 
   useEffect(() => {
@@ -43,7 +54,8 @@ export default function ReviewPage({ deckId }: ReviewPageProps) {
     await reviewCard(deckIdValue, dueCard.srs.cardId, grade);
     await incrementEvent('review_done');
     setShowAnswer(false);
-    setStatus('✨ 復習を記録しました！');
+    setStatus(`✨ ${gradeLabels.find((item) => item.key === grade)?.label ?? ''} で記録しました`);
+    showToast?.(`+${gradeLabels.find((item) => item.key === grade)?.xp ?? 0}XP`, 'success');
     await load();
   };
 
@@ -84,6 +96,7 @@ export default function ReviewPage({ deckId }: ReviewPageProps) {
         {deckTitle && dueCard && (
           <div>
             <p className="notice">先に意味を思い出してから「意味を見る」を押そう。</p>
+            <p className="badge">今日の残り: {dueCount} 枚</p>
 
             {/* Word Display Card */}
             <div style={{
@@ -139,20 +152,6 @@ export default function ReviewPage({ deckId }: ReviewPageProps) {
                 👀 意味を見る
               </button>
             )}
-
-            <div className="grade-grid">
-              {gradeLabels.map((item) => (
-                <button
-                  className="grade-button"
-                  key={item.key}
-                  onClick={() => handleReview(item.key)}
-                >
-                  <span style={{ fontSize: '1.2rem' }}>{item.emoji}</span>
-                  {item.label}
-                  <span>+{item.xp}XP</span>
-                </button>
-              ))}
-            </div>
           </div>
         )}
         {status && (
@@ -165,6 +164,25 @@ export default function ReviewPage({ deckId }: ReviewPageProps) {
           </p>
         )}
       </div>
+
+      {deckTitle && dueCard && (
+        <div className="review-grade-dock">
+          <div className="grade-grid">
+            {gradeLabels.map((item) => (
+              <button
+                className="grade-button"
+                key={item.key}
+                onClick={() => handleReview(item.key)}
+              >
+                <span style={{ fontSize: '1.2rem' }}>{item.emoji}</span>
+                {item.label}
+                <span>+{item.xp}XP</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {deckTitle && dueCard && <div className="review-page-spacer" />}
     </section>
   );
 }

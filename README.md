@@ -63,6 +63,51 @@ pnpm deploy
 - ローカルDB: IndexedDB（Dexie）
 - OCR: ブラウザ内（WebWorker）で英語OCR
 
+## 画面導線（モバイル）
+
+- AppShell:
+  - ヘッダー: アプリ名 / レベルXP / 設定 / フィードバック
+  - 下部固定ナビ: `Scan` / `Review` / `Character`
+- ルート:
+  - `/scan` OCR〜単語ノート作成のウィザード
+  - `/review` 今日の復習ホーム
+  - `/review/:deckId` デッキごとの復習
+  - `/character` 進捗表示
+  - `/settings` OCR設定（デバッグ・前処理・PSM）
+
+## Scanフロー（5ステップ）
+
+1. 画像選択（カメラ/ファイル）
+2. 本文領域を矩形クロップ
+3. OCR実行（前処理 + PSM選択 + キャンセル可）
+4. 未知語候補を選択（Select all / Clear / ソート）
+5. 単語ノート作成 → Review開始
+
+## OCR改善点（エンジン変更なし）
+
+- 前処理（Canvas）
+  - grayscale
+  - contrast / brightness
+  - threshold（二値化）
+  - invert（白黒反転）
+  - 最大辺上限でメモリ保護
+- Tesseract最適化
+  - PSM切替（6 / 11 / 7）
+  - worker再利用（毎回newしない）
+  - OCRキャンセル（terminate→再初期化）
+- 抽出精度の体感改善
+  - ゴミトークン除外（短すぎ・記号過多・数字過多）
+  - 低品質候補に「要確認」表示
+  - 辞書既知語は meaning 自動補完（found）
+
+## OCRデバッグモード
+
+- `/settings` の `OCRデバッグ` をONにすると `/scan` で表示:
+  - 前処理前画像
+  - 前処理後画像
+  - 前処理時間 / OCR時間 / confidence / PSM
+- これらは端末内表示のみで、サーバ送信しません。
+
 ## 認証（疑似アカウント）
 
 - 初回に `POST /api/v1/bootstrap` を呼び出し、`userId` と `apiKey` を受け取ります。
@@ -129,6 +174,13 @@ curl -X POST http://127.0.0.1:8787/api/v1/lexemes/commit \\
 - `meaningJa` は 80 文字以内、`exampleEn` と `note` は 160 文字以内
 - 改行を含む入力は 400 で拒否
 
+## 送信制約（再掲）
+
+- 画像・本文画像・OCR全文・長文本文はサーバ送信しない。
+- `/api/v1/lexemes/lookup` には headword 配列のみ送信。
+- `/api/v1/lexemes/commit` には short meaning（必要なら short example/note）のみ送信。
+- Review回答ログは IndexedDB 内のみで管理し、クラウド保存しない。
+
 ## API 例（フィードバック）
 
 ```bash
@@ -156,3 +208,4 @@ curl -X POST http://127.0.0.1:8787/api/v1/feedback \\
 - Antigravity視覚レビュー手順: `docs/antigravity-visual-review.md`
 - 画面仕様（文言・状態・導線）: `docs/screen-spec.md`
 - UI調整ガイド: `docs/ui-ux-adjustment-guide.md`
+- PRサマリ・TODOメモ: `docs/uiux_ocr_notes.md`

@@ -45,6 +45,13 @@ export type XpSummary = {
   dailyRemaining: number;
 };
 
+export type DeckDueSummary = {
+  deckId: string;
+  title: string;
+  dueCount: number;
+  totalCards: number;
+};
+
 const XP_DAILY_LIMIT = 300;
 const XP_PER_LEVEL = 100;
 
@@ -141,6 +148,32 @@ export const getDueCard = async (deckId: string): Promise<DueCard | null> => {
   const lexeme = await db.lexemeCache.get(srs.headwordNorm);
   if (!lexeme) return null;
   return { srs, lexeme };
+};
+
+export const getDueCount = async (deckId: string) => {
+  const now = Date.now();
+  return db.srs.where('[deckId+dueAt]').between([deckId, 0], [deckId, now]).count();
+};
+
+export const listDeckDueSummaries = async (): Promise<DeckDueSummary[]> => {
+  const decks = await listDecks();
+  const summaries = await Promise.all(
+    decks.map(async (deck) => {
+      const dueCount = await getDueCount(deck.deckId);
+      return {
+        deckId: deck.deckId,
+        title: deck.title,
+        dueCount,
+        totalCards: deck.headwordNorms.length
+      };
+    })
+  );
+  return summaries.sort((a, b) => b.dueCount - a.dueCount || a.title.localeCompare(b.title));
+};
+
+export const getTodayDueTotal = async () => {
+  const summaries = await listDeckDueSummaries();
+  return summaries.reduce((sum, item) => sum + item.dueCount, 0);
 };
 
 const getOrCreateXp = async () => {
