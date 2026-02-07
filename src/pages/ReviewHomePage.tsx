@@ -247,42 +247,44 @@ export default function ReviewHomePage() {
   // 通常のホーム画面
   return (
     <section className="section-grid">
-      {/* 今日の3分ボタン - 最も目立つ位置 */}
-      <div className="card" style={{ background: 'linear-gradient(135deg, var(--primary-light), var(--secondary-light))' }}>
-        <h2>⚡ 今日の3分</h2>
-        <p style={{ color: 'var(--text-secondary)', marginBottom: 12 }}>
-          苦手な単語を{Math.min(quickCount, 5)}問だけ復習
-        </p>
-        {quickCount > 0 ? (
-          <button
-            onClick={handleStartQuickReview}
-            style={{ width: '100%', fontSize: '1.1rem' }}
-          >
-            さっそく始める！
-          </button>
-        ) : (
-          <p style={{ color: 'var(--text-muted)', textAlign: 'center' }}>
-            今日の復習はクリア済み ✨
-          </p>
-        )}
+      {/* 今日の3分 - コンパクト版 */}
+      <div className="card card-compact" style={{ background: 'linear-gradient(135deg, var(--primary-light), var(--secondary-light))' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h2 style={{ margin: 0 }}>⚡ きょうの3分</h2>
+          {quickCount > 0 ? (
+            <button
+              onClick={handleStartQuickReview}
+              style={{ width: 'auto', padding: '8px 16px', fontSize: '0.9rem' }}
+            >
+              さっそく始める！
+            </button>
+          ) : (
+            <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>クリア済み ✨</span>
+          )}
+        </div>
       </div>
 
-      <div className="card">
-        <h2>今日の復習</h2>
-        <p className="badge">残り: {totalDue} 枚</p>
-        {recommendedDeck && (
-          <div className="scan-inline-actions">
+      {/* 主 CTA: 単語帳がない場合はfold内に大きなボタン */}
+      {!recommendedDeck && (
+        <div className="card" style={{ textAlign: 'center' }}>
+          <p style={{ marginBottom: 12 }}>まず1つ作ってみよう 📷</p>
+          <Link className="pill" to="/scan">写真から単語を追加</Link>
+        </div>
+      )}
+
+      {recommendedDeck && (
+        <div className="card card-compact">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <h2 style={{ margin: 0 }}>📚 今日の復習</h2>
+              <small className="badge badge-sm">残り: {totalDue} 枚</small>
+            </div>
             <Link className="pill" to={`/review/${recommendedDeck.deckId}`}>
-              つづける: {recommendedDeck.title}
+              つづける
             </Link>
           </div>
-        )}
-        {!recommendedDeck && (
-          <p>
-            まだ単語帳がない！<Link className="pill" to="/scan">写真から作る</Link>
-          </p>
-        )}
-      </div>
+        </div>
+      )}
 
       <div className="card">
         <h2>単語帳</h2>

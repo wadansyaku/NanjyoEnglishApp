@@ -178,19 +178,12 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <header className="app-header">
-        <div>
-          <h1>えいたんメイト</h1>
-          <p>写真から単語を見つけて、自分だけの単語ノートで復習しよう。</p>
-        </div>
+      <header className="app-header app-header-compact">
+        <h1>えいたんメイト</h1>
         <div className="app-header-actions">
-          <span className="badge">{xpLabel}</span>
-          <Link className="pill" to="/settings">
-            ⚙️ 設定
-          </Link>
-          <button className="pill" type="button" onClick={() => setFeedbackOpen(true)}>
-            💬 アプリに意見
-          </button>
+          <span className="badge badge-sm">{xpLabel}</span>
+          <Link className="pill pill-sm" to="/settings">⚙️</Link>
+          <button className="pill pill-sm" type="button" onClick={() => setFeedbackOpen(true)}>💬</button>
         </div>
       </header>
 
@@ -202,8 +195,8 @@ export default function App() {
           <small>写真で単語</small>
         </Link>
         <Link className={`bottom-nav-item ${isReviewActive ? 'active' : ''}`} to="/review">
-          <span>📝</span>
-          <small>Review</small>
+          <span>📖</span>
+          <small>復習</small>
         </Link>
         <Link className={`bottom-nav-item ${isCharacterActive ? 'active' : ''}`} to="/character">
           <span>⭐</span>

@@ -64,10 +64,15 @@ const XP_DAILY_LIMIT = 300;
  * 対数XPカーブ: レベルNに必要な累計XPを計算
  * 行動心理学に基づき、初期は達成しやすく、高レベルほど努力が必要
  * 公式: totalXP = BASE * (SCALE^level - 1) / (SCALE - 1)
- * Level 1: 0 XP, Level 2: 30 XP, Level 3: 69 XP, Level 5: 176 XP, Level 10: 878 XP
+ * 
+ * 目安値（毎日300XP獲得想定、年間約11万pt）:
+ * - Lv.5: 約200pt（数日）
+ * - Lv.10: 約1,200pt（約1週間）
+ * - Lv.30: 約2万pt（約2ヶ月）
+ * - Lv.100: 約1200万pt（10年以上）
  */
-const XP_LEVEL_BASE = 30;  // レベル2に必要な基準XP
-const XP_LEVEL_SCALE = 1.3; // 各レベルで必要XPが1.3倍に増加
+const XP_LEVEL_BASE = 40;  // レベル2に必要な基準XP（上げて序盤を難しく）
+const XP_LEVEL_SCALE = 1.12; // 各レベルで必要XPが1.12倍に増加
 
 /** レベルNに到達するために必要な累計XP */
 export const getXpRequiredForLevel = (level: number): number => {

@@ -14,10 +14,71 @@ import { usePath } from '../lib/router';
 import { ensureAuth } from '../lib/auth';
 import { getUsageMinutesToday } from '../lib/usage';
 
-const getTitleForLevel = (level: number) => {
-  if (level >= 15) return 'ことばクイーン';
-  if (level >= 10) return 'ぐんぐんチャレンジャー';
-  if (level >= 5) return 'ことばトレーナー';
+// ============================================
+// 進化システム定義
+// ============================================
+
+// 進化段階（5段階）
+type EvolutionStage = {
+  id: string;
+  name: string;
+  minLevel: number;
+  color: string;
+  emoji: string;
+  description: string;
+  image: string;
+};
+
+const EVOLUTION_STAGES: EvolutionStage[] = [
+  { id: 'egg', name: 'たまご', minLevel: 1, color: '#FFE5B4', emoji: '🥚', description: 'まだ眠っているよ', image: '/evolution_egg.png' },
+  { id: 'chick', name: 'ひよこ', minLevel: 5, color: '#FFF59D', emoji: '🐣', description: '英語に目覚めた！', image: '/evolution_chick.png' },
+  { id: 'bird', name: 'ことり', minLevel: 15, color: '#81D4FA', emoji: '🐦', description: '羽ばたき始めた！', image: '/evolution_bird.png' },
+  { id: 'phoenix', name: 'フェニックス', minLevel: 30, color: '#FFAB91', emoji: '🔥', description: '炎のように輝く！', image: '/evolution_phoenix.png' },
+  { id: 'dragon', name: 'ドラゴン', minLevel: 50, color: '#CE93D8', emoji: '🐉', description: '伝説の領域へ！', image: '/evolution_dragon.png' }
+];
+
+const getEvolutionStage = (level: number): EvolutionStage => {
+  for (let i = EVOLUTION_STAGES.length - 1; i >= 0; i--) {
+    if (level >= EVOLUTION_STAGES[i].minLevel) {
+      return EVOLUTION_STAGES[i];
+    }
+  }
+  return EVOLUTION_STAGES[0];
+};
+
+const getNextEvolution = (level: number): EvolutionStage | null => {
+  const current = getEvolutionStage(level);
+  const idx = EVOLUTION_STAGES.findIndex(s => s.id === current.id);
+  return idx < EVOLUTION_STAGES.length - 1 ? EVOLUTION_STAGES[idx + 1] : null;
+};
+
+// 称号システム（レベルに応じた称号）
+type TitleInfo = {
+  title: string;
+  minLevel: number;
+  schoolLevel: string;
+};
+
+const TITLE_MILESTONES: TitleInfo[] = [
+  { title: 'はじめの一歩', minLevel: 1, schoolLevel: '入門' },
+  { title: 'ことばトレーナー', minLevel: 5, schoolLevel: '中1前半' },
+  { title: 'ぐんぐんチャレンジャー', minLevel: 10, schoolLevel: '中1後半' },
+  { title: 'ことばクイーン', minLevel: 15, schoolLevel: '中2' },
+  { title: 'マスターへの道', minLevel: 20, schoolLevel: '中2後半' },
+  { title: 'ワードハンター', minLevel: 25, schoolLevel: '中3' },
+  { title: '英語の達人', minLevel: 30, schoolLevel: '中3後半' },
+  { title: 'ハイスクールスター', minLevel: 40, schoolLevel: '高1〜高2' },
+  { title: 'アカデミックエース', minLevel: 50, schoolLevel: '高3' },
+  { title: 'ユニバーシティマスター', minLevel: 70, schoolLevel: '大学2年' },
+  { title: 'レジェンド', minLevel: 100, schoolLevel: '達人' }
+];
+
+const getTitleForLevel = (level: number): string => {
+  for (let i = TITLE_MILESTONES.length - 1; i >= 0; i--) {
+    if (level >= TITLE_MILESTONES[i].minLevel) {
+      return TITLE_MILESTONES[i].title;
+    }
+  }
   return 'はじめの一歩';
 };
 
@@ -284,12 +345,40 @@ export default function CharacterPage() {
       <div className="card">
         <h2>マイキャラ</h2>
 
-        {/* Mascot Character */}
+        {/* Evolution Stage */}
+        {(() => {
+          const stage = getEvolutionStage(summary.level);
+          const nextStage = getNextEvolution(summary.level);
+          return (
+            <div className="evolution-display" style={{ marginBottom: 16, textAlign: 'center' }}>
+              <div className="evolution-badge" style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '8px 16px',
+                borderRadius: 20,
+                background: stage.color,
+                fontSize: '0.9rem',
+                fontWeight: 600
+              }}>
+                <span style={{ fontSize: '1.2rem' }}>{stage.emoji}</span>
+                <span>{stage.name}</span>
+              </div>
+              {nextStage && (
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 8 }}>
+                  次の進化: Lv.{nextStage.minLevel}で {nextStage.emoji}{nextStage.name} に！
+                </p>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* Mascot Character with Animation - 進化段階に応じた画像 */}
         <div className="mascot-container">
           <img
-            src="/mascot.jpg"
-            alt="えいたんの妖精"
-            className="mascot"
+            src={getEvolutionStage(summary.level).image}
+            alt={`進化段階: ${getEvolutionStage(summary.level).name}`}
+            className="mascot mascot-float"
           />
           <div className="mascot-speech">
             「{getMascotMessage(summary.level, summary.dailyEarned, diffFromYesterday)}」
@@ -411,31 +500,69 @@ export default function CharacterPage() {
           </div>
         )}
 
-        {/* Level Milestones */}
+        {/* Level Milestones - 拡張版 */}
         <details className="level-milestones">
-          <summary>レベル目安</summary>
-          <div className="milestone-list">
-            <div className="milestone-item">
-              <span>Lv.5</span>
-              <span>{getXpRequiredForLevel(5)} pt〜</span>
-              <span>ことばトレーナー</span>
-            </div>
-            <div className="milestone-item">
-              <span>Lv.10</span>
-              <span>{getXpRequiredForLevel(10)} pt〜</span>
-              <span>ぐんぐんチャレンジャー</span>
-            </div>
-            <div className="milestone-item">
-              <span>Lv.15</span>
-              <span>{getXpRequiredForLevel(15)} pt〜</span>
-              <span>ことばクイーン</span>
-            </div>
+          <summary>🎯 レベル目安・称号一覧</summary>
+          <div className="milestone-grid" style={{ marginTop: 12 }}>
+            {TITLE_MILESTONES.map((m, i) => {
+              const isAchieved = summary.level >= m.minLevel;
+              const isCurrent = summary.level >= m.minLevel &&
+                (i === TITLE_MILESTONES.length - 1 || summary.level < TITLE_MILESTONES[i + 1].minLevel);
+              return (
+                <div
+                  key={m.minLevel}
+                  className="milestone-card"
+                  style={{
+                    padding: 12,
+                    borderRadius: 12,
+                    border: isCurrent ? '2px solid var(--primary)' : '1px solid var(--border-light)',
+                    background: isAchieved ? 'rgba(255, 126, 179, 0.1)' : '#fff',
+                    opacity: isAchieved ? 1 : 0.6
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                    <strong style={{ color: isAchieved ? 'var(--primary-dark)' : 'var(--text-muted)' }}>
+                      Lv.{m.minLevel} {isAchieved ? '✓' : ''}
+                    </strong>
+                  </div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>{m.title}</div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                    {getXpRequiredForLevel(m.minLevel).toLocaleString()} pt〜
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* 進化段階表 */}
+          <h4 style={{ marginTop: 20, fontSize: '0.9rem' }}>🥚 キャラ進化</h4>
+          <div className="evolution-grid" style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+            {EVOLUTION_STAGES.map((stage) => {
+              const isAchieved = summary.level >= stage.minLevel;
+              return (
+                <div
+                  key={stage.id}
+                  style={{
+                    padding: '8px 12px',
+                    borderRadius: 12,
+                    background: isAchieved ? stage.color : '#eee',
+                    opacity: isAchieved ? 1 : 0.5,
+                    textAlign: 'center',
+                    fontSize: '0.75rem'
+                  }}
+                >
+                  <div style={{ fontSize: '1.2rem' }}>{stage.emoji}</div>
+                  <div style={{ fontWeight: 600 }}>{stage.name}</div>
+                  <div style={{ color: 'var(--text-muted)' }}>Lv.{stage.minLevel}〜</div>
+                </div>
+              );
+            })}
           </div>
         </details>
       </div>
 
-      <div className="card">
-        <h2>学習ログ</h2>
+      <details className="card">
+        <summary style={{ cursor: 'pointer', fontWeight: 600 }}>📊 学習ログ</summary>
         {counters.length === 0 && (
           <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '20px 0' }}>
             まだログがありません。
@@ -444,7 +571,7 @@ export default function CharacterPage() {
           </p>
         )}
         {counters.length > 0 && (
-          <div className="word-grid">
+          <div className="word-grid" style={{ marginTop: 12 }}>
             {counters.map((counter) => {
               const info = eventLabelMap[counter.name] ?? { label: counter.name, icon: '📌' };
               return (
@@ -459,19 +586,19 @@ export default function CharacterPage() {
             })}
           </div>
         )}
-      </div>
+      </details>
 
-      <div className="card">
-        <h2>今日の冒険</h2>
-        <p className="notice">校正タスクを進めると、冒険デッキが解放されます。</p>
+      <details className="card">
+        <summary style={{ cursor: 'pointer', fontWeight: 600 }}>🏰 きょうのぼうけん</summary>
+        <p className="notice" style={{ marginTop: 12 }}>チェックを進めると、ぼうけん単語帳がもらえるよ！</p>
         {adventureLoading && <p className="counter">読み込み中…</p>}
         {!adventureLoading && !adventure && (
-          <p className="counter">冒険データを取得できませんでした。時間を置いて再試行してください。</p>
+          <p className="counter">ぼうけんデータが取得できませんでした。</p>
         )}
         {adventure && (
           <>
             <p className="badge">
-              進捗: {adventure.clearedCount}/{adventure.totalTasks} ・ 残りトークン: {proofreadRemaining}
+              進み: {adventure.clearedCount}/{adventure.totalTasks} ・ 残りポイント: {proofreadRemaining}
             </p>
             <div className="word-grid">
               {adventureTasks.map((task) => (
@@ -479,7 +606,7 @@ export default function CharacterPage() {
                   <div>
                     <strong>{task.headwordNorm || 'task'}</strong>
                     <small className="candidate-meta">
-                      {task.type === 'proofread' ? '校正ミッション' : '提案ミッション'} ・ {task.status}
+                      {task.type === 'proofread' ? 'チェック' : 'ていあん'}ミッション ・ {task.status === 'done' ? '完了' : '未完了'}
                     </small>
                   </div>
                   <button
@@ -498,12 +625,12 @@ export default function CharacterPage() {
               ))}
             </div>
             {adventure.unlockReady && (
-              <p className="counter">今日の冒険はクリア済みです。復習画面で報酬デッキを確認できます。</p>
+              <p className="counter">きょうのぼうけんはクリア済みです。復習画面で単語帳を確認してね！</p>
             )}
           </>
         )}
         {adventureStatus && <p className="counter">{adventureStatus}</p>}
-      </div>
+      </details>
     </section>
   );
 }
