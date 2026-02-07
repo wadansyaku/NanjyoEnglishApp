@@ -527,10 +527,12 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
     } catch (error) {
       const message = (error as Error).message;
       if (message.toLowerCase().includes('canceled') || message.toLowerCase().includes('abort')) {
-        showToast('OCRをキャンセルしました。', 'info');
+        showToast('キャンセルしたよ。もう一度試してね！', 'info');
       } else {
-        setOcrError(message);
-        showToast(message, 'error');
+        // 親しみやすいエラーメッセージに変換
+        const friendlyMessage = 'うまく読めなかったみたい。もう一度トリミングを調整してみよう！';
+        setOcrError(friendlyMessage);
+        showToast(friendlyMessage, 'error');
       }
     } finally {
       cloudAbortRef.current = null;

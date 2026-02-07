@@ -297,3 +297,40 @@ export const incrementEvent = async (name: string) => {
 
 export const listEventCounters = async () =>
   db.eventCounters.orderBy('updatedAt').reverse().toArray();
+
+/**
+ * Quick Review用: 苦手な単語・期限切れの単語を最大limit件取得
+ * ペルソナ「莉乃」の「今日の3分」モード用
+ */
+export const getQuickReviewCards = async (limit = 5): Promise<DueCard[]> => {
+  const now = Date.now();
+  // 期限切れのカードを取得（複数デッキにまたがって）
+  const overdueCards = await db.srs
+    .where('dueAt')
+    .below(now)
+    .limit(limit * 2) // 余裕を持って取得
+    .toArray();
+
+  // lapsesが多い順（苦手）→ repsが少ない順（復習回数少）にソート
+  overdueCards.sort((a, b) => {
+    if (b.lapses !== a.lapses) return b.lapses - a.lapses;
+    return a.reps - b.reps;
+  });
+
+  const results: DueCard[] = [];
+  for (const srs of overdueCards.slice(0, limit)) {
+    const lexeme = await db.lexemeCache.get(srs.headwordNorm);
+    if (lexeme) {
+      results.push({ srs, lexeme });
+    }
+  }
+  return results;
+};
+
+/**
+ * Quick Review用: 期限切れカードの総数を取得
+ */
+export const getQuickReviewCount = async (): Promise<number> => {
+  const now = Date.now();
+  return db.srs.where('dueAt').below(now).count();
+};

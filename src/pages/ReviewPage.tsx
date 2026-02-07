@@ -10,9 +10,9 @@ import {
 } from '../db';
 
 const gradeLabels = [
-  { key: 'again', label: 'もう1回', xp: 0, emoji: '🔄' },
-  { key: 'hard', label: 'むずかしい', xp: 1, emoji: '😓' },
-  { key: 'good', label: 'できた', xp: 2, emoji: '😊' },
+  { key: 'again', label: 'もう一回', xp: 0, emoji: '🔄' },
+  { key: 'hard', label: 'むずい', xp: 1, emoji: '😓' },
+  { key: 'good', label: 'できた！', xp: 2, emoji: '😊' },
   { key: 'easy', label: 'かんたん', xp: 3, emoji: '🌟' }
 ] as const;
 
@@ -54,8 +54,12 @@ export default function ReviewPage({ deckId, showToast }: ReviewPageProps) {
     await reviewCard(deckIdValue, dueCard.srs.cardId, grade);
     await incrementEvent('review_done');
     setShowAnswer(false);
-    setStatus(`✨ ${gradeLabels.find((item) => item.key === grade)?.label ?? ''} で記録しました`);
-    showToast?.(`+${gradeLabels.find((item) => item.key === grade)?.xp ?? 0}XP`, 'success');
+    const gradeInfo = gradeLabels.find((item) => item.key === grade);
+    setStatus(`${gradeInfo?.emoji ?? '✨'} ${gradeInfo?.label ?? ''} で進んだよ！`);
+    const xp = gradeInfo?.xp ?? 0;
+    if (xp > 0) {
+      showToast?.(`+${xp}pt`, 'success');
+    }
     await load();
   };
 
