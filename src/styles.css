@@ -7,41 +7,41 @@
 
 :root {
   color-scheme: light;
-  
+
   /* Primary Colors - Kawaii Palette */
   --primary: #FF7EB3;
   --primary-light: #FFC8DD;
   --primary-dark: #E85A94;
-  
+
   /* Secondary Colors */
   --secondary: #8ECAE6;
   --secondary-light: #BDE0FE;
-  
+
   /* Accent Colors */
   --accent: #FFD166;
   --accent-light: #FFE5A0;
   --success: #95D5B2;
   --success-light: #C7F9CC;
-  
+
   /* Neutral Colors */
   --text-primary: #4A3050;
   --text-secondary: #7A5C80;
   --text-muted: #A08AA6;
-  
+
   /* Background Colors */
   --bg-base: #FFF5F8;
   --bg-card: rgba(255, 255, 255, 0.95);
   --bg-header: rgba(255, 252, 249, 0.95);
-  
+
   /* Border Colors */
   --border-light: rgba(255, 126, 179, 0.25);
   --border-medium: rgba(255, 126, 179, 0.4);
-  
+
   /* Shadows */
   --shadow-soft: 0 8px 24px rgba(255, 126, 179, 0.15);
   --shadow-medium: 0 12px 32px rgba(255, 126, 179, 0.2);
   --shadow-button: 0 6px 20px rgba(255, 126, 179, 0.35);
-  
+
   /* Font */
   font-family: 'M PLUS Rounded 1c', 'Hiragino Maru Gothic ProN', 'Yu Gothic', sans-serif;
   background-color: var(--bg-base);
@@ -195,6 +195,7 @@ main {
   0% {
     transform: rotate(0deg);
   }
+
   100% {
     transform: rotate(360deg);
   }
@@ -239,8 +240,17 @@ header::after {
 }
 
 @keyframes sparkle {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.6; transform: scale(1.1); }
+
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.6;
+    transform: scale(1.1);
+  }
 }
 
 header h1 {
@@ -353,9 +363,17 @@ button.pill {
   font-size: 1rem;
 }
 
-.card:nth-child(2) h2::before { content: '📚'; }
-.card:nth-child(3) h2::before { content: '📓'; }
-.card:nth-child(4) h2::before { content: '🎒'; }
+.card:nth-child(2) h2::before {
+  content: '📚';
+}
+
+.card:nth-child(3) h2::before {
+  content: '📓';
+}
+
+.card:nth-child(4) h2::before {
+  content: '🎒';
+}
 
 /* ========================================
    Form Elements
@@ -449,7 +467,7 @@ button::before {
   left: -100%;
   width: 100%;
   height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
   transition: left 0.5s ease;
 }
 
@@ -592,41 +610,46 @@ button:disabled {
   margin-bottom: 10px;
 }
 
-.candidate-item input[type='text'] + input[type='text'] {
+.candidate-item input[type='text']+input[type='text'] {
   margin-top: 8px;
 }
 
 .scan-stepper {
   display: grid;
-  grid-template-columns: repeat(5, minmax(72px, 1fr));
-  gap: 8px;
-  margin-bottom: 14px;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+  margin-bottom: 12px;
 }
 
 .scan-step-pill {
   width: 100%;
-  min-height: 56px;
-  border-radius: 12px;
+  min-height: 44px;
+  border-radius: 10px;
   border: 1px solid var(--border-light);
   background: #fff;
   color: var(--text-secondary);
   box-shadow: none;
-  padding: 8px;
+  padding: 4px 2px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 1px;
 }
 
 .scan-step-pill span {
-  font-size: 0.8rem;
+  font-size: 0.7rem;
   font-weight: 700;
 }
 
 .scan-step-pill small {
-  font-size: 0.7rem;
-  line-height: 1.2;
+  font-size: 0.55rem;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  padding: 0 2px;
 }
 
 .scan-step-pill.active {
@@ -637,7 +660,7 @@ button:disabled {
 
 .scan-step-content {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .scan-inline-actions {
@@ -950,8 +973,15 @@ hr {
 }
 
 @keyframes float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-8px); }
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-8px);
+  }
 }
 
 .title-badge {

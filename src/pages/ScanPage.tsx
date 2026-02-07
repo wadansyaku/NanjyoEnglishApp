@@ -40,6 +40,7 @@ type Candidate = {
   aiSuggested: boolean;
 };
 
+// 5ステップを維持しつつ、用語を中学生向けに改善
 type ScanStep = 1 | 2 | 3 | 4 | 5;
 
 type LookupState = 'idle' | 'loading' | 'done' | 'error';
@@ -51,12 +52,13 @@ const LIMITS = {
   meaning: 80
 };
 
+// 用語を中学生向けに改善（OCR→文字読取、ウィザード→ステップ）
 const STEP_LABELS: Array<{ id: ScanStep; title: string; hint: string }> = [
-  { id: 1, title: '画像を選ぶ', hint: 'カメラかファイルを選択' },
-  { id: 2, title: '範囲を切り取る', hint: '本文だけを四角で指定' },
-  { id: 3, title: 'OCRを実行', hint: '前処理・PSMを調整可能' },
-  { id: 4, title: '単語を選ぶ', hint: '意味入力と取捨選択' },
-  { id: 5, title: 'ノート作成', hint: '作成して復習開始' }
+  { id: 1, title: '📷 写真を選ぶ', hint: '教科書の写真を撮影' },
+  { id: 2, title: '✂️ 範囲を選ぶ', hint: '読み取る場所を指定' },
+  { id: 3, title: '📖 文字を読取', hint: '自動で文字認識' },
+  { id: 4, title: '✏️ 単語を選ぶ', hint: '意味を入力' },
+  { id: 5, title: '✅ 完成', hint: '単語帳を作成' }
 ];
 
 const LOOKUP_STATUS_LABEL: Record<LookupState, string> = {
@@ -578,11 +580,11 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
       prev.map((item) =>
         item.id === candidateId
           ? {
-              ...item,
-              meaning: sanitizeShortText(nextMeaning, LIMITS.meaning),
-              source: item.source,
-              aiSuggested: item.aiSuggested
-            }
+            ...item,
+            meaning: sanitizeShortText(nextMeaning, LIMITS.meaning),
+            source: item.source,
+            aiSuggested: item.aiSuggested
+          }
           : item
       )
     );
@@ -648,7 +650,7 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
   return (
     <section className="section-grid">
       <div className="card">
-        <h2>Scanウィザード</h2>
+        <h2>単語帳を作る</h2>
         <div className="scan-stepper">
           {STEP_LABELS.map((step) => (
             <button
@@ -725,9 +727,9 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
 
         {currentStep === 3 && (
           <div className="scan-step-content">
-            <p className="notice">デフォルトはローカルOCR（端末内処理）です。必要ならクラウドOCRを選べます。</p>
+            <p className="notice">文字を自動で読み取ります。通常はそのまま実行してください。</p>
 
-            <div className="scan-ocr-mode-grid" role="radiogroup" aria-label="OCRモード">
+            <div className="scan-ocr-mode-grid" role="radiogroup" aria-label="読み取り方法">
               <label className={`scan-ocr-mode ${ocrMode === 'local' ? 'active' : ''}`}>
                 <input
                   type="radio"
@@ -735,7 +737,7 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
                   checked={ocrMode === 'local'}
                   onChange={() => setOcrMode('local')}
                 />
-                <span>ローカルOCR（無料）</span>
+                <span>📱 端末内で処理（無料）</span>
               </label>
               <label
                 className={`scan-ocr-mode ${ocrMode === 'cloud' ? 'active' : ''} ${!settings.cloudOcrEnabled ? 'disabled' : ''}`}
@@ -747,24 +749,23 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
                   disabled={!settings.cloudOcrEnabled}
                   onChange={() => setOcrMode('cloud')}
                 />
-                <span>クラウドOCR（高精度）</span>
+                <span>☁️ クラウド処理（高精度）</span>
               </label>
             </div>
             {!settings.cloudOcrEnabled && (
               <p className="counter">
-                クラウドOCRは「設定 {'>'} クラウド機能」で同意・有効化すると選択できます。
+                クラウド処理は「設定 {'>'} クラウド機能」で有効化できます。
               </p>
             )}
 
-            <label>PSM（文字分割モード）</label>
-            <select value={ocrPsm} onChange={(event) => setOcrPsm(event.target.value as OcrPsm)}>
-              <option value="6">6: 本文ブロック向け（おすすめ）</option>
-              <option value="11">11: ばらけた文字向け</option>
-              <option value="7">7: 1行だけ読む</option>
-            </select>
-
             <details className="scan-details">
-              <summary>前処理の設定</summary>
+              <summary>詳細設定（上級者向け）</summary>
+              <label>読み取りモード</label>
+              <select value={ocrPsm} onChange={(event) => setOcrPsm(event.target.value as OcrPsm)}>
+                <option value="6">文章ブロック（おすすめ）</option>
+                <option value="11">バラバラの文字</option>
+                <option value="7">1行だけ</option>
+              </select>
               <div className="scan-option-grid">
                 <label className="candidate-toggle">
                   <input
@@ -827,13 +828,13 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
             <div className="scan-inline-actions">
               {!ocrRunning && (
                 <button type="button" onClick={handleRunOcr}>
-                  OCRを実行
+                  📏 文字を読み取る
                 </button>
               )}
               {ocrRunning && (
                 <>
                   <button type="button" disabled>
-                    OCR実行中…
+                    読み取り中…
                   </button>
                   <button className="secondary" type="button" onClick={handleCancelOcr}>
                     キャンセル
@@ -867,11 +868,11 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
 
             {ocrText && (
               <>
-                <label>OCR結果（必要なら修正）</label>
+                <label>読み取り結果（必要なら修正）</label>
                 <textarea
                   value={ocrText}
                   onChange={(event) => setOcrText(event.target.value)}
-                  placeholder="OCR結果を確認して修正"
+                  placeholder="読み取り結果を確認して修正"
                 />
                 <div className="scan-inline-actions">
                   <button className="secondary" type="button" onClick={handleRebuildCandidates}>
