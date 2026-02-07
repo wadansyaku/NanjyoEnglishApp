@@ -13,12 +13,19 @@ import {
     type ABTest,
     type ABTestConfig
 } from '../lib/abtest';
+import { defaultSettings, type AppSettings } from '../lib/settings';
+import type { OcrPsm } from '../lib/ocr';
 
 const ADMIN_PASSWORD = 'nanjyo2024'; // 簡易的なパスワード保護
 
 type AdminState = 'locked' | 'unlocked';
 
-export default function AdminPage() {
+type AdminPageProps = {
+    settings: AppSettings;
+    onChangeSettings: (settings: AppSettings) => void;
+};
+
+export default function AdminPage({ settings, onChangeSettings }: AdminPageProps) {
     const [adminState, setAdminState] = useState<AdminState>('locked');
     const [password, setPassword] = useState('');
     const [passwordError, setPasswordError] = useState('');
@@ -378,6 +385,96 @@ export default function AdminPage() {
                         </tbody>
                     </table>
                 )}
+            </div>
+
+            {/* OCR設定（管理者専用） */}
+            <div className="card">
+                <h3>🔧 OCR設定（管理者専用）</h3>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 12 }}>
+                    ユーザーには見えない高度な設定です
+                </p>
+
+                <label className="candidate-toggle">
+                    <input
+                        type="checkbox"
+                        checked={settings.ocrDebug}
+                        onChange={(e) => onChangeSettings({ ...settings, ocrDebug: e.target.checked })}
+                    />
+                    <span>OCRデバッグを表示する</span>
+                </label>
+
+                <label style={{ marginTop: 12, display: 'block' }}>既定PSM</label>
+                <select
+                    value={settings.defaultPsm}
+                    onChange={(e) => onChangeSettings({ ...settings, defaultPsm: e.target.value as OcrPsm })}
+                    style={{ width: '100%' }}
+                >
+                    <option value="6">6: 本文ブロック向け</option>
+                    <option value="11">11: ばらけた文字向け</option>
+                    <option value="7">7: 1行向け</option>
+                </select>
+
+                <details style={{ marginTop: 16 }}>
+                    <summary>前処理の既定値</summary>
+                    <div style={{ marginTop: 8 }}>
+                        <div className="scan-option-grid">
+                            <label className="candidate-toggle">
+                                <input
+                                    type="checkbox"
+                                    checked={settings.defaultPreprocess.grayscale}
+                                    onChange={(e) => onChangeSettings({
+                                        ...settings,
+                                        defaultPreprocess: { ...settings.defaultPreprocess, grayscale: e.target.checked }
+                                    })}
+                                />
+                                <span>グレースケール</span>
+                            </label>
+                            <label className="candidate-toggle">
+                                <input
+                                    type="checkbox"
+                                    checked={settings.defaultPreprocess.threshold}
+                                    onChange={(e) => onChangeSettings({
+                                        ...settings,
+                                        defaultPreprocess: { ...settings.defaultPreprocess, threshold: e.target.checked }
+                                    })}
+                                />
+                                <span>二値化</span>
+                            </label>
+                            <label className="candidate-toggle">
+                                <input
+                                    type="checkbox"
+                                    checked={settings.defaultPreprocess.invert}
+                                    onChange={(e) => onChangeSettings({
+                                        ...settings,
+                                        defaultPreprocess: { ...settings.defaultPreprocess, invert: e.target.checked }
+                                    })}
+                                />
+                                <span>白黒反転</span>
+                            </label>
+                        </div>
+
+                        <label style={{ marginTop: 8 }}>Threshold: {Math.round(settings.defaultPreprocess.thresholdValue)}</label>
+                        <input
+                            type="range"
+                            min={0}
+                            max={255}
+                            value={settings.defaultPreprocess.thresholdValue}
+                            onChange={(e) => onChangeSettings({
+                                ...settings,
+                                defaultPreprocess: { ...settings.defaultPreprocess, thresholdValue: Number(e.target.value) }
+                            })}
+                        />
+
+                        <button
+                            type="button"
+                            className="secondary"
+                            onClick={() => onChangeSettings(defaultSettings)}
+                            style={{ marginTop: 12 }}
+                        >
+                            初期値に戻す
+                        </button>
+                    </div>
+                </details>
             </div>
         </section>
     );

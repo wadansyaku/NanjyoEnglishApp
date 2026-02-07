@@ -150,7 +150,7 @@ export default function App() {
       return <SettingsPage settings={settings} onChangeSettings={handleChangeSettings} />;
     }
     if (normalizedPath === '/admin') {
-      return <AdminPage />;
+      return <AdminPage settings={settings} onChangeSettings={handleChangeSettings} />;
     }
     return <ScanPage settings={settings} showToast={showToast} navigate={navigate} />;
   }, [normalizedPath, navigate, settings, showToast, handleChangeSettings]);
