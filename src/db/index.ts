@@ -53,7 +53,45 @@ export type DeckDueSummary = {
 };
 
 const XP_DAILY_LIMIT = 300;
-const XP_PER_LEVEL = 100;
+
+/**
+ * 対数XPカーブ: レベルNに必要な累計XPを計算
+ * 行動心理学に基づき、初期は達成しやすく、高レベルほど努力が必要
+ * 公式: totalXP = BASE * (SCALE^level - 1) / (SCALE - 1)
+ * Level 1: 0 XP, Level 2: 30 XP, Level 3: 69 XP, Level 5: 176 XP, Level 10: 878 XP
+ */
+const XP_LEVEL_BASE = 30;  // レベル2に必要な基準XP
+const XP_LEVEL_SCALE = 1.3; // 各レベルで必要XPが1.3倍に増加
+
+/** レベルNに到達するために必要な累計XP */
+export const getXpRequiredForLevel = (level: number): number => {
+  if (level <= 1) return 0;
+  // 幾何級数の和: base * (scale^(n-1) - 1) / (scale - 1)
+  return Math.floor(XP_LEVEL_BASE * (Math.pow(XP_LEVEL_SCALE, level - 1) - 1) / (XP_LEVEL_SCALE - 1));
+};
+
+/** 現在の累計XPからレベルを算出 */
+export const getLevelFromXp = (xpTotal: number): number => {
+  if (xpTotal <= 0) return 1;
+  // 逆算: level = 1 + log_scale(1 + xpTotal * (scale - 1) / base)
+  const inner = 1 + (xpTotal * (XP_LEVEL_SCALE - 1)) / XP_LEVEL_BASE;
+  const level = 1 + Math.floor(Math.log(inner) / Math.log(XP_LEVEL_SCALE));
+  return Math.max(1, level);
+};
+
+/** 次のレベルまでに必要な残りXP */
+export const getXpToNextLevel = (xpTotal: number): { current: number; required: number; progress: number } => {
+  const level = getLevelFromXp(xpTotal);
+  const currentLevelXp = getXpRequiredForLevel(level);
+  const nextLevelXp = getXpRequiredForLevel(level + 1);
+  const neededForThisLevel = nextLevelXp - currentLevelXp;
+  const progressInLevel = xpTotal - currentLevelXp;
+  return {
+    current: progressInLevel,
+    required: neededForThisLevel,
+    progress: neededForThisLevel > 0 ? progressInLevel / neededForThisLevel : 1
+  };
+};
 
 const getDateKey = (date = new Date()) => {
   const yyyy = date.getFullYear();
@@ -211,7 +249,7 @@ const awardXp = async (grade: ReviewGrade, wasDue: boolean) => {
     const granted = Math.min(base, remaining);
     if (granted <= 0) return;
     const xpTotal = xpState.xpTotal + granted;
-    const level = Math.floor(xpTotal / XP_PER_LEVEL) + 1;
+    const level = getLevelFromXp(xpTotal);
     await db.xp.put({ ...xpState, xpTotal, level });
     await db.xpDaily.put({ ...daily, earned: daily.earned + granted });
   });

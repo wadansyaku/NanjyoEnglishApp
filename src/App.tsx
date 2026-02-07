@@ -4,6 +4,7 @@ import ReviewPage from './pages/ReviewPage';
 import ReviewHomePage from './pages/ReviewHomePage';
 import CharacterPage from './pages/CharacterPage';
 import SettingsPage from './pages/SettingsPage';
+import AdminPage from './pages/AdminPage';
 import { Link, usePath } from './lib/router';
 import { ensureAuth } from './lib/auth';
 import { loadLastOcrMetrics } from './lib/feedbackMeta';
@@ -28,7 +29,7 @@ export default function App() {
   const [feedbackStatus, setFeedbackStatus] = useState('');
   const [feedbackSending, setFeedbackSending] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
-  const [xpLabel, setXpLabel] = useState('Lv.1 / 0XP');
+  const [xpLabel, setXpLabel] = useState('Lv.1 / 0pt');
 
   useEffect(() => {
     saveSettings(settings);
@@ -61,7 +62,7 @@ export default function App() {
     void (async () => {
       const summary = await getXpSummary();
       if (cancelled) return;
-      setXpLabel(`Lv.${summary.level} / ${summary.xpTotal}XP`);
+      setXpLabel(`Lv.${summary.level} / ${summary.xpTotal}pt`);
     })();
     return () => {
       cancelled = true;
@@ -104,14 +105,14 @@ export default function App() {
             device: summarizeDevice(navigator.userAgent),
             latestOcr: ocrMetrics
               ? {
-                  mode: ocrMetrics.mode ?? 'local',
-                  provider: ocrMetrics.provider ?? 'tesseract-local',
-                  preprocessMs: Math.round(ocrMetrics.preprocessMs),
-                  ocrMs: Math.round(ocrMetrics.ocrMs),
-                  totalMs: Math.round(ocrMetrics.preprocessMs + ocrMetrics.ocrMs),
-                  confidence: ocrMetrics.confidence,
-                  psm: ocrMetrics.psm
-                }
+                mode: ocrMetrics.mode ?? 'local',
+                provider: ocrMetrics.provider ?? 'tesseract-local',
+                preprocessMs: Math.round(ocrMetrics.preprocessMs),
+                ocrMs: Math.round(ocrMetrics.ocrMs),
+                totalMs: Math.round(ocrMetrics.preprocessMs + ocrMetrics.ocrMs),
+                confidence: ocrMetrics.confidence,
+                psm: ocrMetrics.psm
+              }
               : null,
             timestamp: new Date().toISOString()
           }
@@ -148,6 +149,9 @@ export default function App() {
     if (normalizedPath === '/settings') {
       return <SettingsPage settings={settings} onChangeSettings={handleChangeSettings} />;
     }
+    if (normalizedPath === '/admin') {
+      return <AdminPage />;
+    }
     return <ScanPage settings={settings} showToast={showToast} navigate={navigate} />;
   }, [normalizedPath, navigate, settings, showToast, handleChangeSettings]);
 
@@ -160,7 +164,7 @@ export default function App() {
       <header className="app-header">
         <div>
           <h1>えいたんメイト</h1>
-          <p>中1向け: 写真→OCR→単語ノート→Review</p>
+          <p>写真から自分だけの単語帳を作ろう！</p>
         </div>
         <div className="app-header-actions">
           <span className="badge">{xpLabel}</span>
@@ -178,15 +182,15 @@ export default function App() {
       <nav className="bottom-nav" aria-label="メインナビゲーション">
         <Link className={`bottom-nav-item ${isScanActive ? 'active' : ''}`} to="/scan">
           <span>📷</span>
-          <small>Scan</small>
+          <small>単語帳</small>
         </Link>
         <Link className={`bottom-nav-item ${isReviewActive ? 'active' : ''}`} to="/review">
           <span>📝</span>
-          <small>Review</small>
+          <small>復習</small>
         </Link>
         <Link className={`bottom-nav-item ${isCharacterActive ? 'active' : ''}`} to="/character">
           <span>⭐</span>
-          <small>Character</small>
+          <small>記録</small>
         </Link>
       </nav>
 
