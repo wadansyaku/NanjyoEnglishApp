@@ -124,6 +124,26 @@ npx wrangler secret put WORKERS_AI_API_TOKEN
 4. 未知語候補選択（Select all / Clear / ソート）
 5. 単語ノート作成 → Review開始
 
+追加仕様:
+
+- 既存SRSで `Mastered` 判定された語（`interval>=21 && ease>=2.3 && reps>=6`）は候補からデフォルト非表示
+- 「学習済みを表示」トグルで再表示可能
+- 画像/OCR本文はサーバへ送信しない（送信するのは `headword` のみ）
+
+## Core Wordbank / Community / 冒険
+
+- Core Wordbank:
+  - `core_words` / `core_decks` / `core_deck_words` で配信単語帳を管理
+  - `/review` から「学校単語帳」を選び、ローカルSRSに取り込んで学習開始
+- Community (Word Repo):
+  - Changesetベースの提案→校正→マージ
+  - 確定語彙は `ugc_lexeme_canonical`
+  - lookup優先順は `community -> core -> legacy`
+- 冒険（ダンジョン）:
+  - `/character` から「今日の冒険」を実行
+  - 校正タスク完了で報酬デッキを解放して学習できる
+  - 校正トークンは `minutesToday` から日次計算
+
 ### OCR改善（エンジン変更なし）
 
 - 前処理（Canvas）
@@ -165,6 +185,10 @@ npx wrangler secret put WORKERS_AI_API_TOKEN
 
 - 入力: `{ headwords: string[] }`
 - 出力: `{ found: [...], missing: [...] }`
+- 内部優先順:
+  1. `ugc_lexeme_canonical`
+  2. `core_words`
+  3. `lexemes` (legacy)
 
 ### 2) `POST /api/v1/lexemes/commit`
 
@@ -213,12 +237,62 @@ npx wrangler secret put WORKERS_AI_API_TOKEN
 - 入力: `{ type, message, contextJson? }`
 - `contextJson` は短く（2000文字以内）、本文/OCR全文は禁止
 
+### 6) `GET /api/v1/wordbank/decks`
+
+- 出力: `deck` 一覧（タイトル、語数、source）
+
+### 7) `GET /api/v1/wordbank/decks/:deckId/words`
+
+- 出力: 指定デッキの語彙一覧（`headword_norm`, `meaning_ja_short`）
+
+### 8) `POST /api/v1/wordbank/admin/upsert-words` (Admin)
+
+- ヘッダ: `x-admin-token` または `Authorization: Bearer <ADMIN_TOKEN>`
+- 入力: words/decks のupsert
+
+### 9) `POST /api/v1/community/changesets`
+
+- 提案（changeset）を作成
+
+### 10) `POST /api/v1/community/changesets/:id/items`
+
+- 提案に単語差分を追加
+
+### 11) `POST /api/v1/community/changesets/:id/submit`
+
+- `draft -> proposed`
+
+### 12) `POST /api/v1/community/changesets/:id/review`
+
+- `approve / request_changes / comment`
+
+### 13) `POST /api/v1/community/changesets/:id/merge`
+
+- editor以上が実行
+- canonical更新 + history追記
+
+### 14) `GET /api/v1/community/tasks`
+
+- 今日の冒険タスクと利用可能トークンを取得
+
+### 15) `POST /api/v1/community/tasks/:taskId/complete`
+
+- タスク完了処理。条件達成で報酬デッキ（headword集合）を返却
+
+### 16) `POST /api/v1/usage/report`
+
+- 入力: `{ minutesToday }`
+- サーバで `proofread_tokens_today` を再計算
+
 ## 日次上限（コスト/乱用対策）
 
 D1 `usage_daily` で `userId + 日付` ごとにカウントします。
 
 - `cloud_ocr_calls_today`
 - `ai_meaning_calls_today`
+- `minutes_today`
+- `proofread_tokens_today`
+- `proofread_used_today`
 
 上限超過時は `429` を返します。上限値は env var で調整できます。
 

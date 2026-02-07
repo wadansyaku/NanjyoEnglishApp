@@ -2,36 +2,26 @@
 
 ## PR Summary (for description)
 
-- Settingsに任意機能を追加（デフォルトOFF）
-  - クラウドOCRトグル
-  - AI意味提案トグル
-  - 初回ON時の同意モーダル（2チェック必須）
-- `/scan` にOCRモード選択を追加
-  - ローカルOCR（既定）
-  - クラウドOCR（Settingsで有効化済みの時のみ）
-- クラウドOCR実行時のクライアント前処理
-  - クロップ後画像を長辺1600px / JPEG 0.8 / 2MB上限で圧縮
-  - サーバには圧縮画像のみ送信
-- Worker APIを追加
-  - `POST /api/v1/ocr/cloud`
-    - Google Cloud Vision連携
-    - 画像保存なし
-    - 返却は全文ではなく `words/headwords` 中心
-  - `POST /api/v1/ai/meaning-suggest`
-    - missing語に短い日本語意味を提案
-    - 80文字以内 / 改行禁止をサーバ側でサニタイズ
-- Scanフロー統合
-  - OCR→候補抽出→lookup→missing の既存流れにAI提案を差し込み
-  - AI提案は入力欄に「提案」として入るだけで、ユーザー編集・確認後にcommit
-- コスト/乱用対策
-  - D1 `usage_daily` を追加
-  - `cloud_ocr_calls_today` / `ai_meaning_calls_today`
-  - 日次上限超過時は429
-- README更新
-  - 任意クラウド機能の説明
-  - 保存しない制約の維持
-  - env/secrets設定手順
-  - 新APIの仕様追記
+1. プライバシー制約を維持したままOCR体験を改善
+   - Scanを5ステップ化（撮影→クロップ→OCR→候補→作成）
+   - ローカルOCR前処理（grayscale/contrast/threshold/invert/PSM切替）
+   - クラウドOCRはSettingsで明示ON+同意時のみ（デフォルトOFF）
+2. 未知語抽出のUX強化
+   - lookup連携後に missing へAI意味提案（短文のみ）
+   - 「カット」候補を別枠管理し、追加対象を明確化
+   - 学習済み語（Mastered）を候補からデフォルト非表示
+3. 学習導線の拡張
+   - `/review` から Core Wordbank デッキを取り込み可能
+   - `/character` に「今日の冒険」導線を追加
+   - 冒険タスク完了で報酬デッキをローカルSRSに解放
+4. バックエンド基盤の拡張
+   - `core_*` / `ugc_*` / `game_*` / `user_roles` / `user_profiles` を追加
+   - `lexemes/lookup` の優先順を `community -> core -> legacy` へ統合
+   - usage日次上限+校正トークン（minutesToday連動）を実装
+5. 本番向け調整
+   - auth/syncスキーマとWorker実装の不一致を解消
+   - emailユニーク制約とmagic-link token schemaを統一
+   - lint/typecheck/build通過を維持
 
 ## Safety / Privacy Notes
 
@@ -39,11 +29,13 @@
 - クラウド機能はユーザー同意後のみ利用可能。
 - 画像・OCR全文・本文全文はサーバ保存しない。
 - フィードバック送信には本文/OCR全文を含めない。
+- Community機能でも本文やOCR全文を扱わず、`headword_norm` と短文フィールドのみ扱う。
 
 ## Future TODO
 
 - クロップ台形補正（四隅編集）
-- OCR後トークンの辞書補正（Levenshtein候補など）
-- AI提案の品質評価（誤訳フィードバックループ）
-- OCR/AIプロバイダ差替えの抽象化レイヤー
+- OCR後トークンの辞書補正（候補ランクと誤認識救済）
+- AI提案品質の自動評価（reject理由を学習に反映）
+- Community画面の本格UI（提案一覧・差分比較・レビュー履歴）
+- 校正タスクの個人割当モデル（複数ユーザー同時利用時の競合解消）
 - FSRS移行の検証

@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Modal } from '../components/ui';
+import { Link } from '../lib/router';
 import { type AppSettings } from '../lib/settings';
+import { getAuth, logout, type AuthSession } from '../lib/auth';
 
 type SettingsPageProps = {
   settings: AppSettings;
@@ -13,6 +15,7 @@ export default function SettingsPage({ settings, onChangeSettings }: SettingsPag
   const [consentTarget, setConsentTarget] = useState<ConsentTarget>(null);
   const [agreedDataTransfer, setAgreedDataTransfer] = useState(false);
   const [agreedSafetyRule, setAgreedSafetyRule] = useState(false);
+  const [auth, setAuth] = useState<AuthSession | null>(() => getAuth());
 
   const updateSettings = (patch: Partial<AppSettings>) => {
     onChangeSettings({
@@ -48,6 +51,11 @@ export default function SettingsPage({ settings, onChangeSettings }: SettingsPag
     closeConsent();
   };
 
+  const handleLogout = () => {
+    logout();
+    setAuth(null);
+  };
+
   const consentTitle = useMemo(() => {
     if (consentTarget === 'cloud') return 'クラウド読み取りの同意';
     if (consentTarget === 'ai') return 'AI意味提案の同意';
@@ -66,6 +74,31 @@ export default function SettingsPage({ settings, onChangeSettings }: SettingsPag
 
   return (
     <section className="section-grid">
+      {/* アカウント */}
+      <div className="card">
+        <h2>👤 アカウント</h2>
+        {auth?.isEmailVerified ? (
+          <>
+            <p className="notice">✅ ログイン済み</p>
+            <p>メール: {auth.email}</p>
+            <div className="scan-inline-actions" style={{ marginTop: 12 }}>
+              <button className="secondary" type="button" onClick={handleLogout}>
+                ログアウト
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="notice">
+              ログインすると、他のデバイスと単語帳を同期できます
+            </p>
+            <Link to="/auth" className="pill primary">
+              🔐 ログイン / 新規登録
+            </Link>
+          </>
+        )}
+      </div>
+
       {/* クラウド機能 - シンプルなトグルのみ */}
       <div className="card">
         <h2>☁️ クラウド機能</h2>

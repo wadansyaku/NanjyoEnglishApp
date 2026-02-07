@@ -47,6 +47,9 @@
   - meaning placeholder:
     - found: `辞書の意味（必要なら直せる）`
     - missing: `意味を入力`
+  - mastered default:
+    - `学習済みを○語かくす`（初期ON）
+    - toggleで再表示可能
 
 ### Block 3: 単語ノートを作る
 
@@ -95,12 +98,17 @@
 - Screen title: `今日のReview`
 - Total due label: `残りカード`
 - Deck rows: `今日: x / 全体: y`
+- Additional section:
+  - title: `学校単語帳`
+  - action: `学習を始める`
+  - behavior: サーバデッキをローカルSRSへ取り込み → `/review/:deckId`
 
 ## Route: `/character`
 
 ### Goal
 
 今の学習進捗と、どれだけ取り組んだかを把握する。
+加えて、`今日の冒険` から校正タスクを進め、報酬デッキを解放できる。
 
 ### Main copy
 
@@ -125,6 +133,15 @@
 - `ocr_done` -> `読み取り完了`
 - `deck_created` -> `単語ノートを作成`
 - `review_done` -> `復習カードに回答`
+
+### 冒険セクション
+
+- title: `今日の冒険`
+- summary: `進捗 x/y ・ 残りトークン n`
+- task action: `進める`
+- clear feedback:
+  - `タスクを完了しました`
+  - `報酬デッキが解放されました`
 
 ## Global Header
 

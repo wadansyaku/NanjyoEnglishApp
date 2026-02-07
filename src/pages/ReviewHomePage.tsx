@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, usePath } from '../lib/router';
 import {
+  createOrUpdateSystemDeck,
   listDeckDueSummaries,
   getQuickReviewCount,
   getQuickReviewCards,
@@ -15,6 +16,15 @@ export default function ReviewHomePage() {
   const { navigate } = usePath();
   const [summaries, setSummaries] = useState<DeckDueSummary[]>([]);
   const [quickCount, setQuickCount] = useState(0);
+  const [wordbankDecks, setWordbankDecks] = useState<Array<{
+    deckId: string;
+    title: string;
+    description: string;
+    wordCount: number;
+  }>>([]);
+  const [wordbankLoading, setWordbankLoading] = useState(false);
+  const [wordbankImportingId, setWordbankImportingId] = useState('');
+  const [wordbankStatus, setWordbankStatus] = useState('');
 
   // Quick Review状態
   const [quickState, setQuickState] = useState<QuickReviewState>('idle');
@@ -29,9 +39,76 @@ export default function ReviewHomePage() {
     setQuickCount(qCount);
   };
 
+  const loadWordbankDecks = async () => {
+    setWordbankLoading(true);
+    try {
+      const response = await fetch('/api/v1/wordbank/decks');
+      if (!response.ok) {
+        setWordbankDecks([]);
+        return;
+      }
+      const data = (await response.json()) as {
+        ok: boolean;
+        decks?: Array<{
+          deckId: string;
+          title: string;
+          description?: string;
+          wordCount?: number;
+        }>;
+      };
+      setWordbankDecks(
+        (data.decks ?? []).map((deck) => ({
+          deckId: deck.deckId,
+          title: deck.title,
+          description: deck.description ?? '',
+          wordCount: Number(deck.wordCount ?? 0)
+        }))
+      );
+    } catch {
+      setWordbankDecks([]);
+    } finally {
+      setWordbankLoading(false);
+    }
+  };
+
   useEffect(() => {
     void loadData();
+    void loadWordbankDecks();
   }, []);
+
+  const handleStartWordbankDeck = async (deckId: string) => {
+    if (!deckId) return;
+    setWordbankImportingId(deckId);
+    setWordbankStatus('');
+    try {
+      const response = await fetch(`/api/v1/wordbank/decks/${encodeURIComponent(deckId)}/words`);
+      if (!response.ok) {
+        throw new Error('単語帳データを取得できませんでした。');
+      }
+      const data = (await response.json()) as {
+        ok: boolean;
+        deck: { deckId: string; title: string };
+        words: Array<{
+          headwordNorm: string;
+          headword: string;
+          meaningJaShort: string;
+        }>;
+      };
+      const localDeckId = await createOrUpdateSystemDeck({
+        sourceId: data.deck.deckId,
+        title: data.deck.title,
+        origin: 'core',
+        words: data.words
+      });
+      setWordbankStatus(`「${data.deck.title}」を復習ノートに追加しました。`);
+      await loadData();
+      navigate(`/review/${localDeckId}`);
+    } catch (error) {
+      setWordbankStatus((error as Error).message || '単語帳の取り込みに失敗しました。');
+    } finally {
+      setWordbankImportingId('');
+    }
+  };
 
   const totalDue = useMemo(
     () => summaries.reduce((sum, item) => sum + item.dueCount, 0),
@@ -225,6 +302,36 @@ export default function ReviewHomePage() {
             </div>
           ))}
         </div>
+      </div>
+
+      <div className="card">
+        <h2>学校単語帳</h2>
+        <p className="notice">先生向けに作られた単語セットを、そのまま復習に追加できます。</p>
+        {wordbankLoading && <p className="counter">読み込み中…</p>}
+        {!wordbankLoading && wordbankDecks.length === 0 && (
+          <p className="counter">公開されている単語帳はまだありません。</p>
+        )}
+        <div className="word-grid">
+          {wordbankDecks.map((deck) => (
+            <div key={deck.deckId} className="word-item">
+              <div>
+                <strong>{deck.title}</strong>
+                <small className="candidate-meta">
+                  {deck.wordCount}語 {deck.description ? `・${deck.description}` : ''}
+                </small>
+              </div>
+              <button
+                className="pill"
+                type="button"
+                onClick={() => handleStartWordbankDeck(deck.deckId)}
+                disabled={wordbankImportingId === deck.deckId}
+              >
+                {wordbankImportingId === deck.deckId ? '追加中…' : '学習を始める'}
+              </button>
+            </div>
+          ))}
+        </div>
+        {wordbankStatus && <p className="counter">{wordbankStatus}</p>}
       </div>
     </section>
   );

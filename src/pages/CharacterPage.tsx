@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  createOrUpdateSystemDeck,
   getXpSummary,
   listEventCounters,
   getXpToNextLevel,
@@ -9,6 +10,9 @@ import {
   type XpSummary,
   type DailyXp
 } from '../db';
+import { usePath } from '../lib/router';
+import { ensureAuth } from '../lib/auth';
+import { getUsageMinutesToday } from '../lib/usage';
 
 const getTitleForLevel = (level: number) => {
   if (level >= 20) return '伝説の学習者 🏆';
@@ -63,9 +67,28 @@ const eventLabelMap: Record<string, { label: string; icon: string }> = {
 };
 
 export default function CharacterPage() {
+  const { navigate } = usePath();
   const [summary, setSummary] = useState<XpSummary | null>(null);
   const [counters, setCounters] = useState<EventCounter[]>([]);
   const [history, setHistory] = useState<DailyXp[]>([]);
+  const [adventure, setAdventure] = useState<{
+    dungeonId: string;
+    title: string;
+    description: string;
+    totalTasks: number;
+    clearedCount: number;
+    unlockReady: boolean;
+  } | null>(null);
+  const [adventureTasks, setAdventureTasks] = useState<Array<{
+    taskId: string;
+    type: string;
+    headwordNorm: string;
+    status: string;
+  }>>([]);
+  const [proofreadRemaining, setProofreadRemaining] = useState(0);
+  const [adventureLoading, setAdventureLoading] = useState(false);
+  const [adventureStatus, setAdventureStatus] = useState('');
+  const [completingTaskId, setCompletingTaskId] = useState('');
 
   useEffect(() => {
     const loadData = async () => {
@@ -95,6 +118,157 @@ export default function CharacterPage() {
   useEffect(() => {
     void load();
   }, []);
+
+  const loadAdventure = async () => {
+    setAdventureLoading(true);
+    try {
+      const session = await ensureAuth();
+      const minutesToday = getUsageMinutesToday();
+      await fetch('/api/v1/usage/report', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          Authorization: `Bearer ${session.apiKey}`
+        },
+        body: JSON.stringify({ minutesToday })
+      });
+
+      const response = await fetch('/api/v1/community/tasks', {
+        headers: {
+          Authorization: `Bearer ${session.apiKey}`
+        }
+      });
+      if (!response.ok) {
+        throw new Error('冒険データの取得に失敗しました。');
+      }
+
+      const data = (await response.json()) as {
+        ok: boolean;
+        dungeon: {
+          dungeonId: string;
+          title: string;
+          description: string;
+          totalTasks: number;
+          clearedCount: number;
+          unlockReady: boolean;
+        };
+        usage: {
+          proofreadRemainingToday: number;
+        };
+        tasks: Array<{
+          taskId: string;
+          type: string;
+          headwordNorm: string;
+          status: string;
+        }>;
+      };
+
+      setAdventure(data.dungeon);
+      setAdventureTasks(data.tasks ?? []);
+      setProofreadRemaining(Math.max(0, Number(data.usage?.proofreadRemainingToday ?? 0)));
+      setAdventureStatus('');
+    } catch (error) {
+      setAdventureStatus((error as Error).message || '冒険データの読み込みに失敗しました。');
+      setAdventure(null);
+      setAdventureTasks([]);
+    } finally {
+      setAdventureLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadAdventure();
+  }, []);
+
+  const unlockDungeonDeck = async (input: { sourceId: string; headwordNorms: string[] }) => {
+    if (!input.headwordNorms.length) return null;
+    const session = await ensureAuth();
+    const lookupResponse = await fetch('/api/v1/lexemes/lookup', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        Authorization: `Bearer ${session.apiKey}`
+      },
+      body: JSON.stringify({ headwords: input.headwordNorms })
+    });
+    if (!lookupResponse.ok) return null;
+    const lookupData = (await lookupResponse.json()) as {
+      found: Array<{
+        headwordNorm?: string;
+        headword?: string;
+        entries?: Array<{ meaning_ja?: string }>;
+      }>;
+    };
+    const words = (lookupData.found ?? [])
+      .map((item) => {
+        const norm = item.headwordNorm ?? '';
+        const headword = item.headword ?? norm;
+        const meaning = item.entries?.[0]?.meaning_ja ?? '';
+        if (!norm || !headword || !meaning) return null;
+        return {
+          headwordNorm: norm,
+          headword,
+          meaningJaShort: meaning
+        };
+      })
+      .filter((item): item is { headwordNorm: string; headword: string; meaningJaShort: string } => Boolean(item));
+
+    if (words.length === 0) return null;
+    return createOrUpdateSystemDeck({
+      sourceId: input.sourceId,
+      title: `${adventure?.title ?? '今日の冒険'}報酬`,
+      origin: 'dungeon',
+      words
+    });
+  };
+
+  const handleCompleteTask = async (taskId: string) => {
+    if (!taskId) return;
+    setCompletingTaskId(taskId);
+    setAdventureStatus('');
+    try {
+      const session = await ensureAuth();
+      const response = await fetch(`/api/v1/community/tasks/${encodeURIComponent(taskId)}/complete`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.apiKey}`
+        }
+      });
+
+      const data = (await response.json()) as {
+        ok: boolean;
+        message?: string;
+        usage?: { proofreadRemainingToday?: number };
+        unlockedDeck?: { sourceId: string; headwordNorms: string[] } | null;
+      };
+
+      if (!response.ok || !data.ok) {
+        throw new Error(data.message || 'タスクを完了できませんでした。');
+      }
+
+      if (data.usage?.proofreadRemainingToday != null) {
+        setProofreadRemaining(Math.max(0, Number(data.usage.proofreadRemainingToday)));
+      }
+
+      if (data.unlockedDeck && data.unlockedDeck.headwordNorms.length > 0) {
+        const deckId = await unlockDungeonDeck(data.unlockedDeck);
+        if (deckId) {
+          setAdventureStatus('報酬デッキが解放されました。すぐに復習できます。');
+          navigate(`/review/${deckId}`);
+        } else {
+          setAdventureStatus('タスクを達成しました。報酬デッキの準備中です。');
+        }
+      } else {
+        setAdventureStatus('タスクを完了しました。');
+      }
+
+      await loadAdventure();
+    } catch (error) {
+      setAdventureStatus((error as Error).message || 'タスク完了に失敗しました。');
+    } finally {
+      setCompletingTaskId('');
+    }
+  };
 
   if (!summary) return <div>Loading...</div>;
 
@@ -286,6 +460,50 @@ export default function CharacterPage() {
             })}
           </div>
         )}
+      </div>
+
+      <div className="card">
+        <h2>今日の冒険</h2>
+        <p className="notice">校正タスクを進めると、冒険デッキが解放されます。</p>
+        {adventureLoading && <p className="counter">読み込み中…</p>}
+        {!adventureLoading && !adventure && (
+          <p className="counter">冒険データを取得できませんでした。時間を置いて再試行してください。</p>
+        )}
+        {adventure && (
+          <>
+            <p className="badge">
+              進捗: {adventure.clearedCount}/{adventure.totalTasks} ・ 残りトークン: {proofreadRemaining}
+            </p>
+            <div className="word-grid">
+              {adventureTasks.map((task) => (
+                <div key={task.taskId} className="word-item">
+                  <div>
+                    <strong>{task.headwordNorm || 'task'}</strong>
+                    <small className="candidate-meta">
+                      {task.type === 'proofread' ? '校正ミッション' : '提案ミッション'} ・ {task.status}
+                    </small>
+                  </div>
+                  <button
+                    className="pill"
+                    type="button"
+                    disabled={task.status === 'done' || completingTaskId === task.taskId || proofreadRemaining <= 0}
+                    onClick={() => handleCompleteTask(task.taskId)}
+                  >
+                    {task.status === 'done'
+                      ? '完了'
+                      : completingTaskId === task.taskId
+                        ? '処理中…'
+                        : '進める'}
+                  </button>
+                </div>
+              ))}
+            </div>
+            {adventure.unlockReady && (
+              <p className="counter">今日の冒険はクリア済みです。復習画面で報酬デッキを確認できます。</p>
+            )}
+          </>
+        )}
+        {adventureStatus && <p className="counter">{adventureStatus}</p>}
       </div>
     </section>
   );
