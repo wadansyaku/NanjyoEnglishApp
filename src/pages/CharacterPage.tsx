@@ -96,7 +96,7 @@ export default function CharacterPage() {
         {/* Mascot Character */}
         <div className="mascot-container">
           <img
-            src="/mascot.png"
+            src="/mascot.jpg"
             alt="えいたんの妖精"
             className="mascot"
           />
