@@ -12,6 +12,7 @@
   - `/scan`: 写真読み取り、単語抽出、単語ノート作成
   - `/review/:deckId`: 復習カード回答
   - `/character`: がんばり記録
+- Feedback UI: ヘッダーの `💬 アプリに意見` からモーダル表示
 - Frontend stack: React + TypeScript + Vite
 - Style source: `src/styles.css`
 
@@ -58,6 +59,11 @@ npm run dev
 3. `/character`
 - レベル・XP表示
 - 学習ログ表示
+
+4. Feedback modal
+- ヘッダーボタンで表示
+- 背景タップ / `Esc` / `×` で閉じる
+- カテゴリ選択、メッセージ入力、意見送信
 
 ## Visual Checklist
 

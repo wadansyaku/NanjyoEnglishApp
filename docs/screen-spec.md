@@ -126,6 +126,7 @@
 
 ## Feedback Form
 
+- Display: ヘッダーの `アプリに意見` ボタンでモーダル表示
 - Title: `アプリへの意見`
 - Category label: `どの内容？`
 - Message label: `メッセージ（200文字まで）`
@@ -133,6 +134,10 @@
 - Counter: `{現在文字数}/200`
 - Safety message:
   - `名前・連絡先・本文の全文は書かないで、短く教えてください。`
+- Close interaction:
+  - 背景タップ
+  - `Esc` キー
+  - `×` ボタン
 
 ## Accessibility Baseline
 

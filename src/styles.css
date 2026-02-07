@@ -555,6 +555,53 @@ button:disabled {
 }
 
 /* ========================================
+   Feedback Modal
+   ======================================== */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(58, 48, 80, 0.45);
+  backdrop-filter: blur(2px);
+}
+
+.modal-card {
+  width: min(560px, 100%);
+  max-height: min(88vh, 720px);
+  overflow: auto;
+}
+
+.modal-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal-close {
+  width: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  height: 40px;
+  border-radius: 999px;
+  padding: 0;
+  font-size: 1.1rem;
+  line-height: 1;
+  background: linear-gradient(135deg, var(--secondary-light), var(--secondary));
+  color: var(--text-primary);
+  box-shadow: 0 4px 12px rgba(142, 202, 230, 0.35);
+}
+
+.modal-close:hover:not(:disabled) {
+  box-shadow: 0 8px 18px rgba(142, 202, 230, 0.45);
+}
+
+/* ========================================
    Horizontal Rule
    ======================================== */
 
@@ -709,5 +756,16 @@ hr {
 
   .stats-grid {
     grid-template-columns: 1fr;
+  }
+
+  .modal-backdrop {
+    align-items: flex-end;
+    padding: 10px;
+  }
+
+  .modal-card {
+    width: 100%;
+    max-height: 92vh;
+    border-radius: 18px 18px 12px 12px;
   }
 }
