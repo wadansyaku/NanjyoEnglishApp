@@ -164,7 +164,7 @@ export default function App() {
       <header className="app-header">
         <div>
           <h1>えいたんメイト</h1>
-          <p>写真から自分だけの単語帳を作ろう！</p>
+          <p>写真から単語を見つけて、自分だけの単語ノートで復習しよう。</p>
         </div>
         <div className="app-header-actions">
           <span className="badge">{xpLabel}</span>
@@ -172,7 +172,7 @@ export default function App() {
             ⚙️ 設定
           </Link>
           <button className="pill" type="button" onClick={() => setFeedbackOpen(true)}>
-            💬 意見
+            💬 アプリに意見
           </button>
         </div>
       </header>
@@ -182,15 +182,15 @@ export default function App() {
       <nav className="bottom-nav" aria-label="メインナビゲーション">
         <Link className={`bottom-nav-item ${isScanActive ? 'active' : ''}`} to="/scan">
           <span>📷</span>
-          <small>単語帳</small>
+          <small>写真で単語</small>
         </Link>
         <Link className={`bottom-nav-item ${isReviewActive ? 'active' : ''}`} to="/review">
           <span>📝</span>
-          <small>復習</small>
+          <small>Review</small>
         </Link>
         <Link className={`bottom-nav-item ${isCharacterActive ? 'active' : ''}`} to="/character">
           <span>⭐</span>
-          <small>記録</small>
+          <small>がんばり記録</small>
         </Link>
       </nav>
 

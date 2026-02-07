@@ -106,6 +106,7 @@
 
 - Section title: `マイキャラ`
 - Badge prefix: `称号:`
+- Badge example: `称号: ことばクイーン`
 - Metrics:
   - `レベル`
   - `トータルXP`
