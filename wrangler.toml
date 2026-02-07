@@ -7,5 +7,5 @@ assets = { directory = "./dist", binding = "ASSETS", not_found_handling = "singl
 [[d1_databases]]
 binding = "DB"
 database_name = "nanjyo_lexicon"
-database_id = "TODO"
+database_id = "33254d1b-7650-4eb3-bff2-f44ffa4abc31"
 migrations_dir = "migrations"
