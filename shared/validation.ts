@@ -1,13 +1,8 @@
 import { LIMITS } from './limits';
+import { normalizeHeadword } from './headword';
 import type { LexemeInput } from './types';
 
 export const hasNewline = (value: string) => /[\r\n]/.test(value);
-
-export const normalizeHeadword = (value: string) =>
-  value
-    .trim()
-    .replace(/\s+/g, ' ')
-    .toLowerCase();
 
 export type ValidationError = {
   field: keyof LexemeInput;
@@ -36,14 +31,15 @@ export const validateShortText = (
 
 export const validateLexemeInput = (input: LexemeInput) => {
   const errors: ValidationError[] = [];
-  const headword = normalizeHeadword(input.headword || '');
+  const rawHeadword = input.headword || '';
+  const headword = normalizeHeadword(rawHeadword);
   if (!headword) {
     errors.push({ field: 'headword', message: 'Headword is required.' });
   }
   if (headword.length > LIMITS.headword) {
     errors.push({ field: 'headword', message: `Must be ${LIMITS.headword} characters or fewer.` });
   }
-  if (hasNewline(headword)) {
+  if (hasNewline(rawHeadword)) {
     errors.push({ field: 'headword', message: 'Newlines are not allowed.' });
   }
   const meaningError = validateShortText('meaning', input.meaning, LIMITS.meaning);

@@ -5,7 +5,7 @@
  * - 結果計測とダッシュボード用API
  */
 
-import { db, incrementEvent } from '../db';
+import { incrementEvent } from '../db';
 
 export type ABTestVariant = 'A' | 'B';
 
@@ -33,7 +33,6 @@ export type ABTestConfig = {
 };
 
 const STORAGE_KEY = 'abtest_config';
-const ASSIGNMENT_KEY = 'abtest_assignments';
 
 // デフォルトのA/Bテスト定義
 const DEFAULT_TESTS: ABTest[] = [

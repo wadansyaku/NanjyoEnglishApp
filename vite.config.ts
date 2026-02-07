@@ -24,7 +24,8 @@ export default defineConfig({
         ]
       },
       workbox: {
-        mode: 'development',
+        skipWaiting: true,
+        clientsClaim: true,
         navigateFallback: '/index.html',
         runtimeCaching: [
           {

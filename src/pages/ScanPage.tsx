@@ -13,6 +13,7 @@ import { extractCandidates } from '../lib/words';
 import {
   addLexemeToDeck,
   createDeck,
+  getMasteredHeadwordNormSet,
   incrementEvent,
   listDecks,
   normalizeHeadword,
@@ -38,6 +39,7 @@ type Candidate = {
   source: 'found' | 'missing';
   quality: 'ok' | 'review';
   aiSuggested: boolean;
+  mastered: boolean;
 };
 
 // 5ステップを維持しつつ、用語を中学生向けに改善
@@ -116,7 +118,8 @@ const createCandidates = (
       meaning: '',
       source: 'missing',
       quality: item.quality,
-      aiSuggested: false
+      aiSuggested: false,
+      mastered: false
     };
   });
 };
@@ -187,6 +190,8 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
   const [lookupError, setLookupError] = useState('');
   const [sortMode, setSortMode] = useState<'freq' | 'alpha'>('freq');
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [showMastered, setShowMastered] = useState(false);
+  const [masteredNormSet, setMasteredNormSet] = useState<Set<string>>(new Set());
 
   const cloudAbortRef = useRef<AbortController | null>(null);
 
@@ -204,14 +209,24 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
     setPreprocessOptions(settings.defaultPreprocess);
   }, [settings.defaultPsm, settings.defaultPreprocess]);
 
+  const masteredHiddenCount = useMemo(() => {
+    if (showMastered) return 0;
+    return candidates.filter((item) => item.mastered).length;
+  }, [candidates, showMastered]);
+
+  const visibleCandidates = useMemo(
+    () => candidates.filter((item) => showMastered || !item.mastered),
+    [candidates, showMastered]
+  );
+
   const selectedCandidates = useMemo(
-    () => sortCandidates(candidates.filter((item) => item.selected), sortMode),
-    [candidates, sortMode]
+    () => sortCandidates(visibleCandidates.filter((item) => item.selected), sortMode),
+    [visibleCandidates, sortMode]
   );
 
   const cutCandidates = useMemo(
-    () => sortCandidates(candidates.filter((item) => !item.selected), sortMode),
-    [candidates, sortMode]
+    () => sortCandidates(visibleCandidates.filter((item) => !item.selected), sortMode),
+    [visibleCandidates, sortMode]
   );
 
   const canCreateDeck = useMemo(() => {
@@ -224,11 +239,23 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
     async (base: Candidate[]) => {
       if (base.length === 0) {
         setCandidates([]);
+        setMasteredNormSet(new Set());
         setLookupStatus('idle');
         return;
       }
 
-      setCandidates(base);
+      const masteredSet = await getMasteredHeadwordNormSet();
+      setMasteredNormSet(masteredSet);
+      setCandidates(
+        base.map((item) => {
+          const mastered = masteredSet.has(item.headwordNorm);
+          return {
+            ...item,
+            mastered,
+            selected: mastered ? false : item.selected
+          };
+        })
+      );
       setLookupStatus('loading');
       setLookupError('');
 
@@ -259,15 +286,22 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
 
         const merged = base.map((item) => {
           const foundMeaning = foundMap.get(item.headwordNorm);
+          const mastered = masteredSet.has(item.headwordNorm);
           if (foundMeaning) {
             return {
               ...item,
               source: 'found' as const,
               meaning: sanitizeShortText(foundMeaning, LIMITS.meaning),
-              aiSuggested: false
+              aiSuggested: false,
+              mastered,
+              selected: mastered ? false : item.selected
             };
           }
-          return item;
+          return {
+            ...item,
+            mastered,
+            selected: mastered ? false : item.selected
+          };
         });
 
         setCandidates(merged);
@@ -306,6 +340,7 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
             if (suggestionMap.size > 0) {
               setCandidates((prev) =>
                 prev.map((item) => {
+                  if (item.mastered) return item;
                   if (item.source !== 'missing') return item;
                   if (item.meaning.trim().length > 0) return item;
                   const suggested = suggestionMap.get(item.headwordNorm);
@@ -364,6 +399,8 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
     setLookupError('');
     setOcrError('');
     setStatus('');
+    setShowMastered(false);
+    setMasteredNormSet(new Set());
     setBeforeDataUrl('');
     setAfterDataUrl('');
     showToast('画像を読み込みました。本文の範囲を選んでください。', 'success');
@@ -527,10 +564,12 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
     } catch (error) {
       const message = (error as Error).message;
       if (message.toLowerCase().includes('canceled') || message.toLowerCase().includes('abort')) {
-        showToast('OCRをキャンセルしました。', 'info');
+        showToast('キャンセルしたよ。もう一度試してね！', 'info');
       } else {
-        setOcrError(message);
-        showToast(message, 'error');
+        // 親しみやすいエラーメッセージに変換
+        const friendlyMessage = 'うまく読めなかったみたい。もう一度トリミングを調整してみよう！';
+        setOcrError(friendlyMessage);
+        showToast(friendlyMessage, 'error');
       }
     } finally {
       cloudAbortRef.current = null;
@@ -563,13 +602,16 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
         if (item.id !== candidateId) return item;
         const headword = sanitizeShortText(nextHeadword, 40);
         const headwordNorm = normalizeHeadword(headword);
+        const mastered = headwordNorm ? masteredNormSet.has(headwordNorm) : false;
         return {
           ...item,
           headword,
           headwordNorm,
           source: 'missing',
           quality: inferQuality(headword),
-          aiSuggested: false
+          aiSuggested: false,
+          mastered,
+          selected: mastered ? false : item.selected
         };
       })
     );
@@ -591,11 +633,21 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
   };
 
   const selectAllCandidates = () => {
-    setCandidates((prev) => prev.map((item) => ({ ...item, selected: true })));
+    setCandidates((prev) =>
+      prev.map((item) => {
+        if (item.mastered && !showMastered) return item;
+        return { ...item, selected: true };
+      })
+    );
   };
 
   const clearAllCandidates = () => {
-    setCandidates((prev) => prev.map((item) => ({ ...item, selected: false })));
+    setCandidates((prev) =>
+      prev.map((item) => {
+        if (item.mastered && !showMastered) return item;
+        return { ...item, selected: false };
+      })
+    );
   };
 
   const handleCreateDeck = async () => {
@@ -900,6 +952,20 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
                   Clear
                 </button>
               </div>
+              {candidates.some((item) => item.mastered) && (
+                <label className="candidate-toggle">
+                  <input
+                    type="checkbox"
+                    checked={showMastered}
+                    onChange={(event) => setShowMastered(event.target.checked)}
+                  />
+                  <span>
+                    {showMastered
+                      ? '学習済み単語を表示中'
+                      : `学習済みを${masteredHiddenCount}語かくす`}
+                  </span>
+                </label>
+              )}
               <label>
                 ソート
                 <select value={sortMode} onChange={(event) => setSortMode(event.target.value as 'freq' | 'alpha')}>
@@ -908,6 +974,9 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
                 </select>
               </label>
             </div>
+            {masteredHiddenCount > 0 && (
+              <p className="counter">学習済みの単語は自動で候補から外しています。</p>
+            )}
 
             <p className="counter">追加予定: {selectedCandidates.length}語</p>
             <div className="word-grid candidate-grid">

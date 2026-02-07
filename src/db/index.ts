@@ -1,5 +1,9 @@
 import Dexie, { type Table } from 'dexie';
 import { applySm2, createInitialSrsState, type ReviewGrade, type SrsState } from '../lib/srs';
+import { normalizeHeadword } from '../../shared/headword';
+import { isMastered } from '../../shared/mastery';
+
+export { normalizeHeadword };
 
 export type LexemeCache = {
   headwordNorm: string;
@@ -13,6 +17,8 @@ export type Deck = {
   title: string;
   headwordNorms: string[];
   createdAt: number;
+  origin?: 'custom' | 'core' | 'dungeon';
+  sourceId?: string;
 };
 
 export type XpState = {
@@ -100,12 +106,6 @@ const getDateKey = (date = new Date()) => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
-export const normalizeHeadword = (value: string) => {
-  const lowered = value.toLowerCase();
-  const parts = lowered.match(/[a-z']+/g);
-  return parts ? parts.join('') : '';
-};
-
 class AppDB extends Dexie {
   lexemeCache!: Table<LexemeCache, string>;
   decks!: Table<Deck, string>;
@@ -134,10 +134,69 @@ export const createDeck = async (title: string) => {
     deckId: crypto.randomUUID(),
     title,
     headwordNorms: [],
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    origin: 'custom'
   };
   await db.decks.put(deck);
   return deck;
+};
+
+export type WordbankWord = {
+  headwordNorm: string;
+  headword: string;
+  meaningJaShort: string;
+};
+
+export const createOrUpdateSystemDeck = async (input: {
+  sourceId: string;
+  title: string;
+  origin: 'core' | 'dungeon';
+  words: WordbankWord[];
+}) => {
+  const deckId = `${input.origin}:${input.sourceId}`;
+  const now = Date.now();
+  const uniqueWords = new Map<string, WordbankWord>();
+  for (const word of input.words) {
+    const headwordNorm = normalizeHeadword(word.headwordNorm || word.headword);
+    if (!headwordNorm) continue;
+    if (!uniqueWords.has(headwordNorm)) {
+      uniqueWords.set(headwordNorm, {
+        headwordNorm,
+        headword: word.headword.trim(),
+        meaningJaShort: word.meaningJaShort.trim()
+      });
+    }
+  }
+
+  const headwordNorms = [...uniqueWords.keys()];
+
+  await db.transaction('rw', db.decks, db.lexemeCache, db.srs, async () => {
+    const existing = await db.decks.get(deckId);
+    await db.decks.put({
+      deckId,
+      title: input.title,
+      headwordNorms,
+      createdAt: existing?.createdAt ?? now,
+      origin: input.origin,
+      sourceId: input.sourceId
+    });
+
+    for (const word of uniqueWords.values()) {
+      await db.lexemeCache.put({
+        headwordNorm: word.headwordNorm,
+        headword: word.headword,
+        meaningJa: word.meaningJaShort,
+        updatedAt: now
+      });
+      const cardId = `${deckId}:${word.headwordNorm}`;
+      const existingCard = await db.srs.get(cardId);
+      if (!existingCard) {
+        await db.srs.put(createInitialSrsState(cardId, deckId, word.headwordNorm, now));
+      }
+    }
+  });
+
+  return deckId;
 };
 
 export const listDecks = async () => db.decks.orderBy('createdAt').toArray();
@@ -297,3 +356,70 @@ export const incrementEvent = async (name: string) => {
 
 export const listEventCounters = async () =>
   db.eventCounters.orderBy('updatedAt').reverse().toArray();
+
+export const getMasteredHeadwordNormSet = async () => {
+  const all = await db.srs.toArray();
+  const set = new Set<string>();
+  for (const state of all) {
+    if (isMastered(state)) {
+      set.add(state.headwordNorm);
+    }
+  }
+  return set;
+};
+
+export const getWeeklyXpHistory = async (): Promise<DailyXp[]> => {
+  const history: DailyXp[] = [];
+  const today = new Date();
+
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const key = `${yyyy}-${mm}-${dd}`;
+
+    const record = await db.xpDaily.get(key);
+    history.push(record || { date: key, earned: 0 });
+  }
+
+  return history;
+};
+
+/**
+ * Quick Review用: 苦手な単語・期限切れの単語を最大limit件取得
+ * ペルソナ「莉乃」の「今日の3分」モード用
+ */
+export const getQuickReviewCards = async (limit = 5): Promise<DueCard[]> => {
+  const now = Date.now();
+  // 期限切れのカードを取得（複数デッキにまたがって）
+  const overdueCards = await db.srs
+    .where('dueAt')
+    .below(now)
+    .limit(limit * 2) // 余裕を持って取得
+    .toArray();
+
+  // lapsesが多い順（苦手）→ repsが少ない順（復習回数少）にソート
+  overdueCards.sort((a, b) => {
+    if (b.lapses !== a.lapses) return b.lapses - a.lapses;
+    return a.reps - b.reps;
+  });
+
+  const results: DueCard[] = [];
+  for (const srs of overdueCards.slice(0, limit)) {
+    const lexeme = await db.lexemeCache.get(srs.headwordNorm);
+    if (lexeme) {
+      results.push({ srs, lexeme });
+    }
+  }
+  return results;
+};
+
+/**
+ * Quick Review用: 期限切れカードの総数を取得
+ */
+export const getQuickReviewCount = async (): Promise<number> => {
+  const now = Date.now();
+  return db.srs.where('dueAt').below(now).count();
+};

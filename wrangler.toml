@@ -1,4 +1,4 @@
-name = "nanjyo-english-app"
+name = "nanjyoenglishapp"
 main = "worker/index.ts"
 compatibility_date = "2026-02-01"
 

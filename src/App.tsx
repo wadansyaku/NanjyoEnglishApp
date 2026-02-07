@@ -5,11 +5,14 @@ import ReviewHomePage from './pages/ReviewHomePage';
 import CharacterPage from './pages/CharacterPage';
 import SettingsPage from './pages/SettingsPage';
 import AdminPage from './pages/AdminPage';
+import AuthPage from './pages/AuthPage';
+import AuthVerifyPage from './pages/AuthVerifyPage';
 import { Link, usePath } from './lib/router';
 import { ensureAuth } from './lib/auth';
 import { loadLastOcrMetrics } from './lib/feedbackMeta';
 import { getXpSummary } from './db';
 import { loadSettings, saveSettings, summarizeDevice, type AppSettings } from './lib/settings';
+import { bumpUsageMinute } from './lib/usage';
 import { Modal, ToastHost, type ToastItem } from './components/ui';
 
 type FeedbackType = 'ocr' | 'ux' | 'bug' | 'feature';
@@ -68,6 +71,14 @@ export default function App() {
       cancelled = true;
     };
   }, [normalizedPath]);
+
+  useEffect(() => {
+    bumpUsageMinute();
+    const timer = window.setInterval(() => {
+      bumpUsageMinute();
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const showToast = useCallback((message: string, type: ToastLevel = 'info') => {
     const id = makeToastId();
@@ -150,7 +161,13 @@ export default function App() {
       return <SettingsPage settings={settings} onChangeSettings={handleChangeSettings} />;
     }
     if (normalizedPath === '/admin') {
-      return <AdminPage />;
+      return <AdminPage settings={settings} onChangeSettings={handleChangeSettings} />;
+    }
+    if (normalizedPath === '/auth') {
+      return <AuthPage navigate={navigate} />;
+    }
+    if (normalizedPath === '/auth/verify') {
+      return <AuthVerifyPage navigate={navigate} />;
     }
     return <ScanPage settings={settings} showToast={showToast} navigate={navigate} />;
   }, [normalizedPath, navigate, settings, showToast, handleChangeSettings]);
