@@ -693,6 +693,42 @@ button:disabled {
   gap: 8px;
 }
 
+.scan-ocr-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.scan-ocr-mode {
+  min-height: 48px;
+  border-radius: 12px;
+  border: 1px solid var(--border-light);
+  background: #fff;
+  padding: 10px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.scan-ocr-mode input[type='radio'] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--primary);
+}
+
+.scan-ocr-mode.active {
+  border-color: var(--border-medium);
+  color: var(--primary-dark);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.scan-ocr-mode.disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
+}
+
 .scan-debug-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(120px, 1fr));
@@ -1052,6 +1088,10 @@ hr {
   }
 
   .scan-option-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .scan-ocr-mode-grid {
     grid-template-columns: 1fr;
   }
 

@@ -4,6 +4,7 @@ import { ensureAuth } from '../lib/auth';
 import { saveLastOcrMetrics } from '../lib/feedbackMeta';
 import { cancelOcr, fileToDataUrl, runOcr, sanitizeShortText, type OcrPsm } from '../lib/ocr';
 import {
+  compressImageForCloud,
   prepareOcrImage,
   type CropRect,
   type OcrPreprocessOptions
@@ -36,11 +37,14 @@ type Candidate = {
   meaning: string;
   source: 'found' | 'missing';
   quality: 'ok' | 'review';
+  aiSuggested: boolean;
 };
 
 type ScanStep = 1 | 2 | 3 | 4 | 5;
 
 type LookupState = 'idle' | 'loading' | 'done' | 'error';
+
+type OcrMode = 'local' | 'cloud';
 
 const MAX_CANDIDATES = 12;
 const LIMITS = {
@@ -62,10 +66,7 @@ const LOOKUP_STATUS_LABEL: Record<LookupState, string> = {
   error: '検索に失敗しました'
 };
 
-const getPointFromEvent = (
-  event: PointerEvent<HTMLDivElement>,
-  container: HTMLDivElement
-) => {
+const getPointFromEvent = (event: PointerEvent<HTMLDivElement>, container: HTMLDivElement) => {
   const rect = container.getBoundingClientRect();
   const x = (event.clientX - rect.left) / rect.width;
   const y = (event.clientY - rect.top) / rect.height;
@@ -98,6 +99,64 @@ const sortCandidates = (items: Candidate[], mode: 'freq' | 'alpha') => {
   });
 };
 
+const createCandidates = (
+  rows: Array<{ word: string; count: number; quality: 'ok' | 'review' }>
+): Candidate[] => {
+  return rows.slice(0, MAX_CANDIDATES).map((item, index) => {
+    const headword = sanitizeShortText(item.word, 40);
+    const headwordNorm = normalizeHeadword(headword);
+    return {
+      id: `${headwordNorm}:${index}`,
+      headword,
+      headwordNorm,
+      count: item.count,
+      selected: true,
+      meaning: '',
+      source: 'missing',
+      quality: item.quality,
+      aiSuggested: false
+    };
+  });
+};
+
+const createCandidatesFromHeadwords = (headwords: string[]) => {
+  const stats = new Map<string, { word: string; count: number; quality: 'ok' | 'review' }>();
+  for (const raw of headwords) {
+    const word = sanitizeShortText(raw, 40);
+    const headwordNorm = normalizeHeadword(word);
+    if (!headwordNorm) continue;
+    const current = stats.get(headwordNorm);
+    const quality = inferQuality(word);
+    if (current) {
+      current.count += 1;
+      if (quality === 'review') current.quality = 'review';
+      continue;
+    }
+    stats.set(headwordNorm, {
+      word,
+      count: 1,
+      quality
+    });
+  }
+  return createCandidates(
+    [...stats.values()]
+      .sort((a, b) => b.count - a.count || a.word.localeCompare(b.word))
+      .map((item) => ({ word: item.word, count: item.count, quality: item.quality }))
+  );
+};
+
+const getApiErrorMessage = async (response: Response, fallback: string) => {
+  try {
+    const data = (await response.json()) as { message?: string };
+    if (typeof data.message === 'string' && data.message.trim()) {
+      return data.message;
+    }
+  } catch {
+    // ignore parse error
+  }
+  return fallback;
+};
+
 export default function ScanPage({ settings, showToast, navigate }: ScanPageProps) {
   const [decks, setDecks] = useState<Deck[]>([]);
   const [currentStep, setCurrentStep] = useState<ScanStep>(1);
@@ -110,9 +169,9 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
   const cropAreaRef = useRef<HTMLDivElement | null>(null);
 
+  const [ocrMode, setOcrMode] = useState<OcrMode>('local');
   const [ocrPsm, setOcrPsm] = useState<OcrPsm>(settings.defaultPsm);
-  const [preprocessOptions, setPreprocessOptions] =
-    useState<OcrPreprocessOptions>(settings.defaultPreprocess);
+  const [preprocessOptions, setPreprocessOptions] = useState<OcrPreprocessOptions>(settings.defaultPreprocess);
   const [ocrRunning, setOcrRunning] = useState(false);
   const [ocrError, setOcrError] = useState('');
   const [ocrText, setOcrText] = useState('');
@@ -126,6 +185,8 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
   const [lookupError, setLookupError] = useState('');
   const [sortMode, setSortMode] = useState<'freq' | 'alpha'>('freq');
   const [candidates, setCandidates] = useState<Candidate[]>([]);
+
+  const cloudAbortRef = useRef<AbortController | null>(null);
 
   const loadDecks = useCallback(async () => {
     const items = await listDecks();
@@ -154,10 +215,140 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
   const canCreateDeck = useMemo(() => {
     if (!deckTitle.trim()) return false;
     if (selectedCandidates.length === 0) return false;
-    return selectedCandidates.every(
-      (item) => item.headwordNorm.length > 0 && item.meaning.trim().length > 0
-    );
+    return selectedCandidates.every((item) => item.headwordNorm.length > 0 && item.meaning.trim().length > 0);
   }, [deckTitle, selectedCandidates]);
+
+  const hydrateCandidates = useCallback(
+    async (base: Candidate[]) => {
+      if (base.length === 0) {
+        setCandidates([]);
+        setLookupStatus('idle');
+        return;
+      }
+
+      setCandidates(base);
+      setLookupStatus('loading');
+      setLookupError('');
+
+      try {
+        const session = await ensureAuth();
+        const response = await fetch('/api/v1/lexemes/lookup', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            Authorization: `Bearer ${session.apiKey}`
+          },
+          // OCR全文は送らない。headword配列だけ送る。
+          body: JSON.stringify({ headwords: base.map((item) => item.headword) })
+        });
+
+        if (!response.ok) {
+          const message = await getApiErrorMessage(response, '辞書検索に失敗しました。');
+          throw new Error(message);
+        }
+
+        const data = (await response.json()) as {
+          found: Array<{ headwordNorm: string; entries: Array<{ meaning_ja: string }> }>;
+        };
+
+        const foundMap = new Map(
+          data.found.map((entry) => [entry.headwordNorm, entry.entries?.[0]?.meaning_ja ?? ''])
+        );
+
+        const merged = base.map((item) => {
+          const foundMeaning = foundMap.get(item.headwordNorm);
+          if (foundMeaning) {
+            return {
+              ...item,
+              source: 'found' as const,
+              meaning: sanitizeShortText(foundMeaning, LIMITS.meaning),
+              aiSuggested: false
+            };
+          }
+          return item;
+        });
+
+        setCandidates(merged);
+        setLookupStatus('done');
+
+        if (settings.aiMeaningAssistEnabled) {
+          const missingHeadwords = [...new Set(merged.filter((item) => item.source === 'missing').map((item) => item.headwordNorm))];
+          if (missingHeadwords.length > 0) {
+            const aiResponse = await fetch('/api/v1/ai/meaning-suggest', {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                Authorization: `Bearer ${session.apiKey}`
+              },
+              body: JSON.stringify({ headwords: missingHeadwords })
+            });
+
+            if (!aiResponse.ok) {
+              const message = await getApiErrorMessage(
+                aiResponse,
+                aiResponse.status === 429 ? 'AI提案の本日の上限に達しました。' : 'AI提案に失敗しました。'
+              );
+              throw new Error(message);
+            }
+
+            const aiData = (await aiResponse.json()) as {
+              suggestions: Array<{ headword: string; meaningJa: string }>;
+            };
+
+            const suggestionMap = new Map(
+              aiData.suggestions
+                .filter((item) => typeof item.headword === 'string' && typeof item.meaningJa === 'string')
+                .map((item) => [normalizeHeadword(item.headword), sanitizeShortText(item.meaningJa, LIMITS.meaning)])
+            );
+
+            if (suggestionMap.size > 0) {
+              setCandidates((prev) =>
+                prev.map((item) => {
+                  if (item.source !== 'missing') return item;
+                  if (item.meaning.trim().length > 0) return item;
+                  const suggested = suggestionMap.get(item.headwordNorm);
+                  if (!suggested) return item;
+                  return {
+                    ...item,
+                    meaning: suggested,
+                    aiSuggested: true
+                  };
+                })
+              );
+              showToast('AI提案を意味欄に反映しました。必要なら修正してください。', 'info');
+            }
+          }
+        }
+      } catch (error) {
+        setLookupStatus('error');
+        const message = (error as Error).message;
+        setLookupError(message);
+        showToast(message, 'error');
+      }
+    },
+    [settings.aiMeaningAssistEnabled, showToast]
+  );
+
+  const buildCandidatesFromText = useCallback(
+    async (text: string) => {
+      const extracted = extractCandidates(text).slice(0, MAX_CANDIDATES);
+      const base = createCandidates(extracted);
+      await hydrateCandidates(base);
+    },
+    [hydrateCandidates]
+  );
+
+  const buildCandidatesFromCloudResult = useCallback(
+    async (headwords: string[], words: string[]) => {
+      const fromText = extractCandidates(words.join(' ')).slice(0, MAX_CANDIDATES);
+      if (fromText.length > 0) {
+        await hydrateCandidates(createCandidates(fromText));
+        return;
+      }
+      await hydrateCandidates(createCandidatesFromHeadwords(headwords));
+    },
+    [hydrateCandidates]
+  );
 
   const handleImageSelect = async (file: File) => {
     await incrementEvent('scan_started');
@@ -206,78 +397,115 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
     setCropRect((prev) => normalizeCropRect(prev));
   };
 
-  const buildCandidatesFromText = useCallback(
-    async (text: string) => {
-      const extracted = extractCandidates(text).slice(0, MAX_CANDIDATES);
-      if (extracted.length === 0) {
-        setCandidates([]);
-        setLookupStatus('idle');
-        return;
-      }
+  const handleRunLocalOcr = async () => {
+    const prepared = await prepareOcrImage(imageDataUrl, cropRect, preprocessOptions);
+    setBeforeDataUrl(prepared.beforeDataUrl);
+    setAfterDataUrl(prepared.afterDataUrl);
+    setPreprocessMs(prepared.timings.cropMs + prepared.timings.preprocessMs);
 
-      const base: Candidate[] = extracted.map((item, index) => {
-        const headword = sanitizeShortText(item.word, 40);
-        const headwordNorm = normalizeHeadword(headword);
-        return {
-          id: `${headwordNorm}:${index}`,
-          headword,
-          headwordNorm,
-          count: item.count,
-          selected: true,
-          meaning: '',
-          source: 'missing',
-          quality: item.quality
-        };
-      });
-      setCandidates(base);
+    const result = await runOcr(prepared.afterDataUrl, { psm: ocrPsm });
+    const text = result.text.trim();
 
-      setLookupStatus('loading');
-      setLookupError('');
-      try {
-        const session = await ensureAuth();
-        const response = await fetch('/api/v1/lexemes/lookup', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            Authorization: `Bearer ${session.apiKey}`
-          },
-          // Never send OCR全文: headword 配列のみ送信
-          body: JSON.stringify({ headwords: base.map((item) => item.headword) })
-        });
+    setOcrText(text);
+    setOcrDurationMs(result.durationMs);
+    setOcrConfidence(result.confidence);
+    setCurrentStep(4);
 
-        if (!response.ok) {
-          throw new Error('辞書検索に失敗しました。');
-        }
+    saveLastOcrMetrics({
+      preprocessMs: prepared.timings.cropMs + prepared.timings.preprocessMs,
+      ocrMs: result.durationMs,
+      confidence: result.confidence,
+      psm: ocrPsm,
+      mode: 'local',
+      provider: 'tesseract-local',
+      timestamp: new Date().toISOString()
+    });
 
-        const data = (await response.json()) as {
-          found: Array<{ headwordNorm: string; entries: Array<{ meaning_ja: string }> }>;
-        };
+    await incrementEvent('ocr_done');
+    await buildCandidatesFromText(text);
+    showToast('OCRが完了しました。単語を確認してください。', 'success');
+  };
 
-        const foundMap = new Map(
-          data.found.map((entry) => [entry.headwordNorm, entry.entries?.[0]?.meaning_ja ?? ''])
-        );
+  const handleRunCloudOcr = async () => {
+    if (!settings.cloudOcrEnabled) {
+      throw new Error('クラウドOCRはSettingsで有効化すると使えます。');
+    }
 
-        setCandidates((prev) =>
-          prev.map((item) => {
-            const foundMeaning = foundMap.get(item.headwordNorm);
-            if (foundMeaning) {
-              return {
-                ...item,
-                source: 'found',
-                meaning: sanitizeShortText(foundMeaning, LIMITS.meaning)
-              };
-            }
-            return item;
-          })
-        );
-        setLookupStatus('done');
-      } catch (error) {
-        setLookupStatus('error');
-        setLookupError((error as Error).message);
-      }
-    },
-    []
-  );
+    const prepared = await prepareOcrImage(imageDataUrl, cropRect, preprocessOptions);
+    setBeforeDataUrl(prepared.beforeDataUrl);
+    setAfterDataUrl(prepared.afterDataUrl);
+
+    const prepStarted = performance.now();
+    const uploadImage = await compressImageForCloud(prepared.beforeDataUrl, {
+      maxSide: 1600,
+      quality: 0.8,
+      maxBytes: 2_000_000
+    });
+    const prepMs = prepared.timings.cropMs + (performance.now() - prepStarted);
+    setPreprocessMs(prepMs);
+
+    const session = await ensureAuth();
+    const requestStarted = performance.now();
+    const controller = new AbortController();
+    cloudAbortRef.current = controller;
+
+    const response = await fetch('/api/v1/ocr/cloud', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        Authorization: `Bearer ${session.apiKey}`
+      },
+      // サーバ送信は圧縮画像のみ。保存用途では使わない。
+      body: JSON.stringify({
+        imageBase64: uploadImage.base64,
+        mime: uploadImage.mime,
+        mode: 'document'
+      }),
+      signal: controller.signal
+    });
+
+    const cloudMs = performance.now() - requestStarted;
+    setOcrDurationMs(cloudMs);
+    setOcrConfidence(null);
+
+    if (!response.ok) {
+      const message = await getApiErrorMessage(
+        response,
+        response.status === 429 ? 'クラウドOCRの本日の上限に達しました。' : 'クラウドOCRに失敗しました。'
+      );
+      throw new Error(message);
+    }
+
+    const data = (await response.json()) as {
+      words?: Array<{ text: string; confidence?: number }>;
+      headwords?: string[];
+    };
+
+    const words = (data.words ?? [])
+      .map((item) => sanitizeShortText(item.text ?? '', 40))
+      .filter((item) => item.length > 0);
+    const headwords = (data.headwords ?? [])
+      .map((item) => normalizeHeadword(item))
+      .filter((item) => item.length > 0);
+
+    const text = words.join(' ');
+    setOcrText(text);
+    setCurrentStep(4);
+
+    saveLastOcrMetrics({
+      preprocessMs: prepMs,
+      ocrMs: cloudMs,
+      confidence: null,
+      psm: ocrPsm,
+      mode: 'cloud',
+      provider: 'google-vision',
+      timestamp: new Date().toISOString()
+    });
+
+    await incrementEvent('ocr_done');
+    await buildCandidatesFromCloudResult(headwords, words);
+    showToast('クラウドOCRが完了しました。単語を確認してください。', 'success');
+  };
 
   const handleRunOcr = async () => {
     if (!imageDataUrl) {
@@ -289,45 +517,32 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
     setOcrError('');
 
     try {
-      const prepared = await prepareOcrImage(imageDataUrl, cropRect, preprocessOptions);
-      setBeforeDataUrl(prepared.beforeDataUrl);
-      setAfterDataUrl(prepared.afterDataUrl);
-      setPreprocessMs(prepared.timings.cropMs + prepared.timings.preprocessMs);
-
-      const result = await runOcr(prepared.afterDataUrl, { psm: ocrPsm });
-      const text = result.text.trim();
-
-      setOcrText(text);
-      setOcrDurationMs(result.durationMs);
-      setOcrConfidence(result.confidence);
-      setCurrentStep(4);
-
-      saveLastOcrMetrics({
-        preprocessMs: prepared.timings.cropMs + prepared.timings.preprocessMs,
-        ocrMs: result.durationMs,
-        confidence: result.confidence,
-        psm: ocrPsm,
-        timestamp: new Date().toISOString()
-      });
-
-      await incrementEvent('ocr_done');
-      await buildCandidatesFromText(text);
-      showToast('OCRが完了しました。単語を確認してください。', 'success');
+      if (ocrMode === 'cloud') {
+        await handleRunCloudOcr();
+      } else {
+        await handleRunLocalOcr();
+      }
     } catch (error) {
       const message = (error as Error).message;
-      if (message.toLowerCase().includes('canceled')) {
+      if (message.toLowerCase().includes('canceled') || message.toLowerCase().includes('abort')) {
         showToast('OCRをキャンセルしました。', 'info');
       } else {
         setOcrError(message);
         showToast(message, 'error');
       }
     } finally {
+      cloudAbortRef.current = null;
       setOcrRunning(false);
     }
   };
 
   const handleCancelOcr = () => {
-    cancelOcr();
+    if (ocrMode === 'cloud') {
+      cloudAbortRef.current?.abort();
+      cloudAbortRef.current = null;
+    } else {
+      cancelOcr();
+    }
     setOcrRunning(false);
   };
 
@@ -337,11 +552,7 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
   };
 
   const toggleCandidate = (candidateId: string) => {
-    setCandidates((prev) =>
-      prev.map((item) =>
-        item.id === candidateId ? { ...item, selected: !item.selected } : item
-      )
-    );
+    setCandidates((prev) => prev.map((item) => (item.id === candidateId ? { ...item, selected: !item.selected } : item)));
   };
 
   const updateHeadword = (candidateId: string, nextHeadword: string) => {
@@ -355,7 +566,8 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
           headword,
           headwordNorm,
           source: 'missing',
-          quality: inferQuality(headword)
+          quality: inferQuality(headword),
+          aiSuggested: false
         };
       })
     );
@@ -368,7 +580,8 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
           ? {
               ...item,
               meaning: sanitizeShortText(nextMeaning, LIMITS.meaning),
-              source: 'missing'
+              source: item.source,
+              aiSuggested: item.aiSuggested
             }
           : item
       )
@@ -498,11 +711,7 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
                   />
                 </div>
                 <div className="scan-inline-actions">
-                  <button
-                    className="secondary"
-                    type="button"
-                    onClick={() => setCropRect({ x: 0, y: 0, width: 1, height: 1 })}
-                  >
+                  <button className="secondary" type="button" onClick={() => setCropRect({ x: 0, y: 0, width: 1, height: 1 })}>
                     全体を選択
                   </button>
                   <button type="button" onClick={() => setCurrentStep(3)}>
@@ -516,7 +725,37 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
 
         {currentStep === 3 && (
           <div className="scan-step-content">
-            <p className="notice">OCR結果は端末内で処理され、サーバには送信されません。</p>
+            <p className="notice">デフォルトはローカルOCR（端末内処理）です。必要ならクラウドOCRを選べます。</p>
+
+            <div className="scan-ocr-mode-grid" role="radiogroup" aria-label="OCRモード">
+              <label className={`scan-ocr-mode ${ocrMode === 'local' ? 'active' : ''}`}>
+                <input
+                  type="radio"
+                  name="ocrMode"
+                  checked={ocrMode === 'local'}
+                  onChange={() => setOcrMode('local')}
+                />
+                <span>ローカルOCR（無料）</span>
+              </label>
+              <label
+                className={`scan-ocr-mode ${ocrMode === 'cloud' ? 'active' : ''} ${!settings.cloudOcrEnabled ? 'disabled' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="ocrMode"
+                  checked={ocrMode === 'cloud'}
+                  disabled={!settings.cloudOcrEnabled}
+                  onChange={() => setOcrMode('cloud')}
+                />
+                <span>クラウドOCR（高精度）</span>
+              </label>
+            </div>
+            {!settings.cloudOcrEnabled && (
+              <p className="counter">
+                クラウドOCRは「設定 {'>'} クラウド機能」で同意・有効化すると選択できます。
+              </p>
+            )}
+
             <label>PSM（文字分割モード）</label>
             <select value={ocrPsm} onChange={(event) => setOcrPsm(event.target.value as OcrPsm)}>
               <option value="6">6: 本文ブロック向け（おすすめ）</option>
@@ -531,9 +770,7 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
                   <input
                     type="checkbox"
                     checked={preprocessOptions.grayscale}
-                    onChange={(event) =>
-                      setPreprocessOptions((prev) => ({ ...prev, grayscale: event.target.checked }))
-                    }
+                    onChange={(event) => setPreprocessOptions((prev) => ({ ...prev, grayscale: event.target.checked }))}
                   />
                   <span>グレースケール</span>
                 </label>
@@ -541,9 +778,7 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
                   <input
                     type="checkbox"
                     checked={preprocessOptions.threshold}
-                    onChange={(event) =>
-                      setPreprocessOptions((prev) => ({ ...prev, threshold: event.target.checked }))
-                    }
+                    onChange={(event) => setPreprocessOptions((prev) => ({ ...prev, threshold: event.target.checked }))}
                   />
                   <span>二値化</span>
                 </label>
@@ -551,9 +786,7 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
                   <input
                     type="checkbox"
                     checked={preprocessOptions.invert}
-                    onChange={(event) =>
-                      setPreprocessOptions((prev) => ({ ...prev, invert: event.target.checked }))
-                    }
+                    onChange={(event) => setPreprocessOptions((prev) => ({ ...prev, invert: event.target.checked }))}
                   />
                   <span>白黒反転</span>
                 </label>
@@ -578,9 +811,7 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
                 max={1.8}
                 step={0.02}
                 value={preprocessOptions.contrast}
-                onChange={(event) =>
-                  setPreprocessOptions((prev) => ({ ...prev, contrast: Number(event.target.value) }))
-                }
+                onChange={(event) => setPreprocessOptions((prev) => ({ ...prev, contrast: Number(event.target.value) }))}
               />
               <label>Brightness: {Math.round(preprocessOptions.brightness)}</label>
               <input
@@ -589,9 +820,7 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
                 max={50}
                 step={1}
                 value={preprocessOptions.brightness}
-                onChange={(event) =>
-                  setPreprocessOptions((prev) => ({ ...prev, brightness: Number(event.target.value) }))
-                }
+                onChange={(event) => setPreprocessOptions((prev) => ({ ...prev, brightness: Number(event.target.value) }))}
               />
             </details>
 
@@ -631,13 +860,14 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
                     信頼度: {ocrConfidence == null ? '取得なし' : `${ocrConfidence.toFixed(1)}%`}
                   </p>
                   <p className="counter">PSM: {ocrPsm}</p>
+                  <p className="counter">モード: {ocrMode === 'local' ? 'ローカルOCR' : 'クラウドOCR'}</p>
                 </div>
               </div>
             )}
 
             {ocrText && (
               <>
-                <label>OCR結果（ここで修正できます）</label>
+                <label>OCR結果（必要なら修正）</label>
                 <textarea
                   value={ocrText}
                   onChange={(event) => setOcrText(event.target.value)}
@@ -671,10 +901,7 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
               </div>
               <label>
                 ソート
-                <select
-                  value={sortMode}
-                  onChange={(event) => setSortMode(event.target.value as 'freq' | 'alpha')}
-                >
+                <select value={sortMode} onChange={(event) => setSortMode(event.target.value as 'freq' | 'alpha')}>
                   <option value="freq">頻度順</option>
                   <option value="alpha">アルファベット順</option>
                 </select>
@@ -689,12 +916,9 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
                     <div>
                       <strong>{item.quality === 'review' ? '単語（要確認）' : '単語'}</strong>
                       <small className="candidate-meta">出現 {item.count}回</small>
+                      {item.aiSuggested && <small className="candidate-meta">AI提案</small>}
                     </div>
-                    <button
-                      className="secondary candidate-cut-button"
-                      type="button"
-                      onClick={() => toggleCandidate(item.id)}
-                    >
+                    <button className="secondary candidate-cut-button" type="button" onClick={() => toggleCandidate(item.id)}>
                       カット
                     </button>
                   </div>
@@ -704,14 +928,16 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
                     placeholder="単語を修正"
                     onChange={(event) => updateHeadword(item.id, event.target.value)}
                   />
-                  {item.headwordNorm.length === 0 && (
-                    <div className="counter">英字の単語を入れてください</div>
-                  )}
+                  {item.headwordNorm.length === 0 && <div className="counter">英字の単語を入れてください</div>}
                   <input
                     type="text"
                     value={item.meaning}
                     placeholder={
-                      item.source === 'found' ? '辞書の意味（必要なら修正）' : '意味を入力'
+                      item.source === 'found'
+                        ? '辞書の意味（必要なら修正）'
+                        : item.aiSuggested
+                          ? 'AI提案（必要なら修正）'
+                          : '意味を入力'
                     }
                     maxLength={LIMITS.meaning}
                     onChange={(event) => updateMeaning(item.id, event.target.value)}
@@ -730,11 +956,7 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
                           <strong>{item.headword}</strong>
                           <small className="candidate-meta">出現 {item.count}回</small>
                         </div>
-                        <button
-                          className="secondary candidate-cut-button"
-                          type="button"
-                          onClick={() => toggleCandidate(item.id)}
-                        >
+                        <button className="secondary candidate-cut-button" type="button" onClick={() => toggleCandidate(item.id)}>
                           追加する
                         </button>
                       </div>

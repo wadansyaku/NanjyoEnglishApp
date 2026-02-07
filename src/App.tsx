@@ -104,8 +104,11 @@ export default function App() {
             device: summarizeDevice(navigator.userAgent),
             latestOcr: ocrMetrics
               ? {
+                  mode: ocrMetrics.mode ?? 'local',
+                  provider: ocrMetrics.provider ?? 'tesseract-local',
                   preprocessMs: Math.round(ocrMetrics.preprocessMs),
                   ocrMs: Math.round(ocrMetrics.ocrMs),
+                  totalMs: Math.round(ocrMetrics.preprocessMs + ocrMetrics.ocrMs),
                   confidence: ocrMetrics.confidence,
                   psm: ocrMetrics.psm
                 }

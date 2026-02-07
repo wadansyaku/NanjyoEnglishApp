@@ -1,67 +1,108 @@
 # Nanjyo English App
 
-教科書本文の一部を撮影 → 端末内OCR → 未知語抽出 → ミニ単語帳 → SRS → リスニング → 英作 → スピーキングまでを1セッションで回すローカルファーストPWAです。
+教科書本文の一部を撮影 → OCR → 未知語抽出 → ミニ単語帳 → SRS を1セッションで回すPWAです。
 
-## 制約（本文はクラウド保存しない）
+## 重要ポリシー（必読）
 
-- 画像・OCR全文・長文本文はサーバへ送信/保存しません（端末内のみ）。
-- クラウドへ送るのは **headword（見出し語）と短い meaning / example / note** のみです。
-- meaning/example/note は **改行禁止・短文のみ**。APIで長文や改行は拒否します。
-- SRSの回答ログは **端末内（IndexedDB）** にのみ保存します。
-- PWAは local-first。オフラインでもSRSが動作します。
-- （再掲）本文画像やOCR全文はクラウドに送信しません。
+- デフォルトは **local-only**（端末内OCR）です。
+- クラウドOCR / AI意味提案は **Settingsで明示的にON + 同意** した時だけ動きます。
+- 画像はサーバに保存しません（D1/R2/KV/Feedback/ログに保存しない）。
+- OCR全文/本文全文は保存しません。
+- クラウドOCRのAPIレスポンスは **全文ではなく単語中心**（`words/headwords`）です。
+- クラウドへ送る辞書データは `headword` と短い `meaning/example/note` のみです。
+- `meaning/example/note` は短文制約（改行禁止・文字数制限）を維持します。
+- SRS回答ログは端末内（IndexedDB）にのみ保存します。
 
 ## 開発手順
 
-### 1) 依存関係のインストール
+### 1) 依存関係
 
 ```bash
-pnpm install
+npm install
 ```
 
-### 2) D1 ローカル適用（初回のみ）
+### 2) D1作成・マイグレーション
 
 ```bash
-pnpm wrangler d1 create nanjyo_lexicon
+npx wrangler d1 create nanjyo_lexicon
 ```
 
-作成された `database_id` を `wrangler.toml` に設定してください。
+作成後に表示された `database_id` を `wrangler.toml` の `[[d1_databases]]` に設定してください。
 
 ```bash
-pnpm wrangler d1 migrations apply nanjyo_lexicon --local
+npx wrangler d1 migrations apply nanjyo_lexicon --local
 ```
 
-ローカルでD1を使う場合は、`pnpm dev` で `wrangler dev --local` が起動します。
-
-### 3) 開発サーバー
+### 3) 起動
 
 ```bash
-pnpm dev
+npm run dev
 ```
 
 - フロント: `http://localhost:5173`
 - API (Worker): `http://127.0.0.1:8787`
 
-### 4) Lint / Typecheck / Build
+### 4) チェック
 
 ```bash
-pnpm lint
-pnpm typecheck
-pnpm build
+npm run lint
+npm run typecheck
+npm run build
 ```
 
-### 5) Deploy
+### 5) デプロイ
 
 ```bash
-pnpm deploy
+npm run deploy
 ```
+
+## クラウドOCR / AI意味提案のセットアップ
+
+### `wrangler.toml` の公開変数（非シークレット）
+
+```toml
+[vars]
+AI_PROVIDER = "openai" # or "workers_ai"
+CLOUD_OCR_DAILY_LIMIT = "20"
+AI_MEANING_DAILY_LIMIT = "20"
+```
+
+### Secret（本番キー）
+
+OpenAI経由（推奨）:
+
+```bash
+npx wrangler secret put OPENAI_API_KEY
+```
+
+Cloud Vision:
+
+```bash
+npx wrangler secret put GOOGLE_VISION_API_KEY
+```
+
+Workers AIを使う場合:
+
+```bash
+npx wrangler secret put WORKERS_AI_API_TOKEN
+```
+
+必要に応じて設定:
+
+- `GOOGLE_VISION_API_ENDPOINT`（通常は不要）
+- `OPENAI_MODEL`（既定: `gpt-4o-mini`）
+- `CF_AIG_ACCOUNT_ID` / `CF_AIG_GATEWAY_ID` / `CF_AIG_BASE_URL`（AI Gateway経由用）
+- `WORKERS_AI_ACCOUNT_ID`
+- `WORKERS_AI_MODEL`
 
 ## アーキテクチャ
 
-- Cloudflare Workers + D1 + 静的アセット（Vite build）で1オリジン構成
+- Cloudflare Workers + D1 + 静的アセット（Vite build）
 - フロント: React + TypeScript + Vite
 - ローカルDB: IndexedDB（Dexie）
-- OCR: ブラウザ内（WebWorker）で英語OCR
+- OCR:
+  - ローカル: Tesseract（WebWorker）
+  - 任意: Cloud Vision（Settingsで有効化時のみ）
 
 ## 画面導線（モバイル）
 
@@ -73,17 +114,17 @@ pnpm deploy
   - `/review` 今日の復習ホーム
   - `/review/:deckId` デッキごとの復習
   - `/character` 進捗表示
-  - `/settings` OCR設定（デバッグ・前処理・PSM）
+  - `/settings` OCR・クラウド機能設定
 
 ## Scanフロー（5ステップ）
 
 1. 画像選択（カメラ/ファイル）
 2. 本文領域を矩形クロップ
-3. OCR実行（前処理 + PSM選択 + キャンセル可）
-4. 未知語候補を選択（Select all / Clear / ソート）
+3. OCR実行（ローカル/クラウド選択、PSM、前処理）
+4. 未知語候補選択（Select all / Clear / ソート）
 5. 単語ノート作成 → Review開始
 
-## OCR改善点（エンジン変更なし）
+### OCR改善（エンジン変更なし）
 
 - 前処理（Canvas）
   - grayscale
@@ -93,119 +134,97 @@ pnpm deploy
   - 最大辺上限でメモリ保護
 - Tesseract最適化
   - PSM切替（6 / 11 / 7）
-  - worker再利用（毎回newしない）
-  - OCRキャンセル（terminate→再初期化）
-- 抽出精度の体感改善
-  - ゴミトークン除外（短すぎ・記号過多・数字過多）
-  - 低品質候補に「要確認」表示
-  - 辞書既知語は meaning 自動補完（found）
+  - worker再利用
+  - OCRキャンセル
+- クラウドOCR連携（任意）
+  - クライアントで画像圧縮（長辺1600、JPEG 0.8、2MB上限）
+  - APIレスポンスは単語中心（全文返却なし）
+- 未知語補助
+  - 辞書既知語の自動補完
+  - missing語へのAI意味提案（短文のみ）
 
 ## OCRデバッグモード
 
-- `/settings` の `OCRデバッグ` をONにすると `/scan` で表示:
-  - 前処理前画像
-  - 前処理後画像
-  - 前処理時間 / OCR時間 / confidence / PSM
-- これらは端末内表示のみで、サーバ送信しません。
+`/settings` の `OCRデバッグ` をONにすると `/scan` で以下を表示します。
 
-## 認証（疑似アカウント）
+- 前処理前画像
+- 前処理後画像
+- 前処理時間 / OCR時間 / confidence / PSM / モード
 
-- 初回に `POST /api/v1/bootstrap` を呼び出し、`userId` と `apiKey` を受け取ります。
-- 以後の辞書API（`/api/v1/lexemes/*`）は `Authorization: Bearer <apiKey>` を付与して呼び出します。
-- `apiKey` は端末内に保存し、サーバ側には SHA-256 ハッシュのみ保存します。
+これらは端末内表示のみで、サーバ送信しません。
 
-## API 例（辞書）
+## 認証
 
-### Lookup
+- 初回 `POST /api/v1/bootstrap` で `userId` / `apiKey` 発行
+- 以後 `/api/v1/*` は `Authorization: Bearer <apiKey>`
+- サーバ側は `apiKey` のSHA-256ハッシュのみ保持
 
-リクエスト:
+## API
 
-```bash
-curl -X POST http://127.0.0.1:8787/api/v1/lexemes/lookup \\
-  -H "Authorization: Bearer <apiKey>" \\
-  -H "Content-Type: application/json" \\
-  -d '{ "headwords": ["take", "run", "don\\u0027t"] }'
-```
+### 1) `POST /api/v1/lexemes/lookup`
 
-レスポンス:
+- 入力: `{ headwords: string[] }`
+- 出力: `{ found: [...], missing: [...] }`
 
-```json
-{
-  "found": [
-    {
-      "lexemeId": 1,
-      "headword": "take",
-      "headwordNorm": "take",
-      "entries": [
-        {
-          "meaning_ja": "取る",
-          "example_en": "I take a seat.",
-          "note": "基礎用法"
-        }
-      ]
-    }
-  ],
-  "missing": ["run", "don't"]
-}
-```
+### 2) `POST /api/v1/lexemes/commit`
 
-### Commit
-
-リクエスト:
-
-```bash
-curl -X POST http://127.0.0.1:8787/api/v1/lexemes/commit \\
-  -H "Authorization: Bearer <apiKey>" \\
-  -H "Content-Type: application/json" \\
-  -d '{ "entries": [ { "headword": "run", "meaningJa": "走る", "exampleEn": "I run fast." } ] }'
-```
-
-レスポンス:
-
-```json
-{
-  "ok": true,
-  "inserted": 1
-}
-```
+- 入力: `{ entries: [{ headword, meaningJa, exampleEn?, note? }] }`
+- 出力: `{ ok: true, inserted: number }`
 
 制約:
 
-- `meaningJa` は 80 文字以内、`exampleEn` と `note` は 160 文字以内
-- 改行を含む入力は 400 で拒否
+- `meaningJa` 80文字以内
+- `exampleEn` / `note` 160文字以内
+- 改行は拒否
 
-## 送信制約（再掲）
+### 3) `POST /api/v1/ocr/cloud`
 
-- 画像・本文画像・OCR全文・長文本文はサーバ送信しない。
-- `/api/v1/lexemes/lookup` には headword 配列のみ送信。
-- `/api/v1/lexemes/commit` には short meaning（必要なら short example/note）のみ送信。
-- Review回答ログは IndexedDB 内のみで管理し、クラウド保存しない。
+- 入力:
 
-## API 例（フィードバック）
-
-```bash
-curl -X POST http://127.0.0.1:8787/api/v1/feedback \\
-  -H "Authorization: Bearer <apiKey>" \\
-  -H "Content-Type: application/json" \\
-  -d '{ "type": "ocr", "message": "OCRの改行が崩れる", "contextJson": { "screen": "/scan" } }'
+```json
+{
+  "imageBase64": "...",
+  "mime": "image/jpeg",
+  "mode": "document"
+}
 ```
+
+- 出力（全文ではなく単語中心）:
+
+```json
+{
+  "words": [{ "text": "example", "confidence": 0.93, "bbox": { "x": 0, "y": 0, "w": 10, "h": 10 } }],
+  "headwords": ["example", "word"]
+}
+```
+
+### 4) `POST /api/v1/ai/meaning-suggest`
+
+- 入力: `{ "headwords": ["example", "word"] }`
+- 出力: `{ "suggestions": [{ "headword": "example", "meaningJa": "例" }] }`
 
 制約:
 
-- `message` は短文のみ（200文字以内、改行禁止）
-- `contextJson` は短く（2000文字以内）、本文やOCR全文は禁止
+- `meaningJa` は80文字以内・改行禁止
+- 長文生成/本文翻訳は行わない
 
-## TODO
+### 5) `POST /api/v1/feedback`
 
-- OCRの精度チューニング（辞書/補正）
-- 音声UIの改善（TTS速度や音声選択）
-- PWAアイコン最適化
-- 同期のバッチ/日次スケジューリング
-- 認証や共有範囲の設計
+- 入力: `{ type, message, contextJson? }`
+- `contextJson` は短く（2000文字以内）、本文/OCR全文は禁止
+
+## 日次上限（コスト/乱用対策）
+
+D1 `usage_daily` で `userId + 日付` ごとにカウントします。
+
+- `cloud_ocr_calls_today`
+- `ai_meaning_calls_today`
+
+上限超過時は `429` を返します。上限値は env var で調整できます。
 
 ## UI/UX ドキュメント
 
-- Antigravity視覚レビュー手順: `docs/antigravity-visual-review.md`
-- 画面仕様（文言・状態・導線）: `docs/screen-spec.md`
-- UI調整ガイド: `docs/ui-ux-adjustment-guide.md`
-- PRサマリ・TODOメモ: `docs/uiux_ocr_notes.md`
+- `docs/antigravity-visual-review.md`
+- `docs/screen-spec.md`
+- `docs/ui-ux-adjustment-guide.md`
+- `docs/uiux_ocr_notes.md`

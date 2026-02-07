@@ -26,6 +26,15 @@ export type PrepareOcrImageResult = {
   };
 };
 
+export type CloudUploadImage = {
+  mime: 'image/jpeg';
+  base64: string;
+  bytes: number;
+  width: number;
+  height: number;
+  dataUrl: string;
+};
+
 const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value));
 
@@ -42,6 +51,11 @@ const createCanvas = (width: number, height: number) => {
   canvas.width = Math.max(1, Math.floor(width));
   canvas.height = Math.max(1, Math.floor(height));
   return canvas;
+};
+
+const estimateBase64Bytes = (base64: string) => {
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
 };
 
 const normalizeCrop = (crop: CropRect | null) => {
@@ -149,5 +163,50 @@ export const prepareOcrImage = async (
       cropMs,
       preprocessMs
     }
+  };
+};
+
+export const compressImageForCloud = async (
+  sourceDataUrl: string,
+  options: { maxSide?: number; quality?: number; maxBytes?: number } = {}
+): Promise<CloudUploadImage> => {
+  const image = await loadImage(sourceDataUrl);
+  const maxSide = clamp(options.maxSide ?? 1600, 800, 2200);
+  const longest = Math.max(image.naturalWidth, image.naturalHeight);
+  const scale = longest > maxSide ? maxSide / longest : 1;
+  const width = Math.max(1, Math.floor(image.naturalWidth * scale));
+  const height = Math.max(1, Math.floor(image.naturalHeight * scale));
+
+  const canvas = createCanvas(width, height);
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new Error('Canvas初期化に失敗しました。');
+  }
+
+  context.drawImage(image, 0, 0, width, height);
+  const maxBytes = Math.max(200_000, options.maxBytes ?? 2_000_000);
+  let quality = clamp(options.quality ?? 0.8, 0.45, 0.92);
+  let dataUrl = canvas.toDataURL('image/jpeg', quality);
+  let base64 = dataUrl.split(',')[1] ?? '';
+  let bytes = estimateBase64Bytes(base64);
+
+  for (let i = 0; i < 5 && bytes > maxBytes && quality > 0.46; i += 1) {
+    quality = Math.max(0.45, quality - 0.1);
+    dataUrl = canvas.toDataURL('image/jpeg', quality);
+    base64 = dataUrl.split(',')[1] ?? '';
+    bytes = estimateBase64Bytes(base64);
+  }
+
+  if (!base64 || bytes > maxBytes) {
+    throw new Error('画像サイズが大きすぎます。範囲を狭めるか、解像度を下げてください。');
+  }
+
+  return {
+    mime: 'image/jpeg',
+    base64,
+    bytes,
+    width,
+    height,
+    dataUrl
   };
 };

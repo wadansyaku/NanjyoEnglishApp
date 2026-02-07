@@ -5,6 +5,10 @@ export type AppSettings = {
   ocrDebug: boolean;
   defaultPsm: OcrPsm;
   defaultPreprocess: OcrPreprocessOptions;
+  cloudOcrEnabled: boolean;
+  aiMeaningAssistEnabled: boolean;
+  cloudOcrConsentAccepted: boolean;
+  aiMeaningConsentAccepted: boolean;
 };
 
 const STORAGE_KEY = 'nanjyo.settings.v1';
@@ -20,7 +24,11 @@ export const defaultSettings: AppSettings = {
     contrast: 1.12,
     brightness: 2,
     maxSide: 1900
-  }
+  },
+  cloudOcrEnabled: false,
+  aiMeaningAssistEnabled: false,
+  cloudOcrConsentAccepted: false,
+  aiMeaningConsentAccepted: false
 };
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -85,7 +93,23 @@ export const loadSettings = (): AppSettings => {
           1200,
           2600
         )
-      }
+      },
+      cloudOcrEnabled:
+        typeof parsed.cloudOcrEnabled === 'boolean'
+          ? parsed.cloudOcrEnabled
+          : defaultSettings.cloudOcrEnabled,
+      aiMeaningAssistEnabled:
+        typeof parsed.aiMeaningAssistEnabled === 'boolean'
+          ? parsed.aiMeaningAssistEnabled
+          : defaultSettings.aiMeaningAssistEnabled,
+      cloudOcrConsentAccepted:
+        typeof parsed.cloudOcrConsentAccepted === 'boolean'
+          ? parsed.cloudOcrConsentAccepted
+          : defaultSettings.cloudOcrConsentAccepted,
+      aiMeaningConsentAccepted:
+        typeof parsed.aiMeaningConsentAccepted === 'boolean'
+          ? parsed.aiMeaningConsentAccepted
+          : defaultSettings.aiMeaningConsentAccepted
     };
   } catch {
     return defaultSettings;

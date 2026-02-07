@@ -3,6 +3,8 @@ type OcrMetrics = {
   ocrMs: number;
   confidence: number | null;
   psm: string;
+  mode?: 'local' | 'cloud';
+  provider?: string;
   timestamp: string;
 };
 
@@ -30,6 +32,8 @@ export const loadLastOcrMetrics = (): OcrMetrics | null => {
       ocrMs: parsed.ocrMs,
       confidence: typeof parsed.confidence === 'number' ? parsed.confidence : null,
       psm: parsed.psm,
+      mode: parsed.mode === 'cloud' ? 'cloud' : parsed.mode === 'local' ? 'local' : undefined,
+      provider: typeof parsed.provider === 'string' ? parsed.provider : undefined,
       timestamp: parsed.timestamp
     };
   } catch {
