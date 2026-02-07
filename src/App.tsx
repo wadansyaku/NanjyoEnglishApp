@@ -66,55 +66,58 @@ export default function App() {
   return (
     <main>
       <header>
-        <h1>学習フロー（ローカル）</h1>
-        <p>辞書→デッキ→SRS→XP→キャラを端末内だけで回します。</p>
+        <h1>えいたんメイト</h1>
+        <p>写真から単語を見つけて、自分だけの単語ノートで復習しよう。</p>
         <nav className="pill-group">
           <Link className="pill" to="/scan">
-            /scan
+            写真で単語
           </Link>
           <Link className="pill" to="/character">
-            /character
+            がんばり記録
           </Link>
           <button
             className="pill"
             type="button"
             onClick={() => setFeedbackOpen((prev) => !prev)}
           >
-            フィードバック
+            アプリに意見
           </button>
         </nav>
       </header>
 
       {feedbackOpen && (
         <section className="card" style={{ marginBottom: 24 }}>
-          <h2>フィードバック</h2>
-          <p className="notice">本文やOCR全文は送信しないでください。</p>
-          <label>種類</label>
+          <h2>アプリへの意見</h2>
+          <p className="notice">
+            名前・連絡先・本文の全文は書かないで、短く教えてください。
+          </p>
+          <label>どの内容？</label>
           <select
             value={feedbackType}
             onChange={(event) =>
               setFeedbackType(event.target.value as 'ocr' | 'ux' | 'bug' | 'feature')
             }
           >
-            <option value="ocr">OCR</option>
-            <option value="ux">UX</option>
-            <option value="bug">Bug</option>
-            <option value="feature">Feature</option>
+            <option value="ocr">読み取り（OCR）</option>
+            <option value="ux">使いやすさ</option>
+            <option value="bug">うまく動かない</option>
+            <option value="feature">ほしい機能</option>
           </select>
-          <label style={{ marginTop: 12 }}>メッセージ（短文）</label>
+          <label style={{ marginTop: 12 }}>メッセージ（200文字まで）</label>
           <input
             type="text"
             value={feedbackMessage}
             maxLength={200}
             onChange={(event) => setFeedbackMessage(event.target.value)}
-            placeholder="例: OCR結果が改行で崩れる"
+            placeholder="例: 写真が暗いときに読み取りしづらい"
           />
+          <p className="counter">{feedbackMessage.trim().length}/200</p>
           <button
             style={{ marginTop: 12 }}
             onClick={handleSendFeedback}
             disabled={feedbackSending || feedbackMessage.trim().length === 0}
           >
-            送信
+            意見を送る
           </button>
           {feedbackStatus && <p className="counter">{feedbackStatus}</p>}
         </section>

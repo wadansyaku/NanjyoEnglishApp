@@ -150,3 +150,9 @@ curl -X POST http://127.0.0.1:8787/api/v1/feedback \\
 - PWAアイコン最適化
 - 同期のバッチ/日次スケジューリング
 - 認証や共有範囲の設計
+
+## UI/UX ドキュメント
+
+- Antigravity視覚レビュー手順: `docs/antigravity-visual-review.md`
+- 画面仕様（文言・状態・導線）: `docs/screen-spec.md`
+- UI調整ガイド: `docs/ui-ux-adjustment-guide.md`

@@ -26,6 +26,20 @@ const LIMITS = {
   meaning: 80
 };
 
+const ocrStatusLabel: Record<'idle' | 'running' | 'done' | 'error', string> = {
+  idle: 'まだ写真を読み取っていません',
+  running: '読み取り中です',
+  done: '読み取りできました',
+  error: '読み取りに失敗しました'
+};
+
+const lookupStatusLabel: Record<'idle' | 'loading' | 'done' | 'error', string> = {
+  idle: 'まだ検索していません',
+  loading: '意味を検索中です',
+  done: '検索が終わりました',
+  error: '検索に失敗しました'
+};
+
 const safeTrim = (value: string) => value.replace(/[\r\n]+/g, ' ').trim();
 
 export default function ScanPage() {
@@ -54,6 +68,7 @@ export default function ScanPage() {
     setOcrError('');
     setLookupStatus('idle');
     setLookupError('');
+    setStatus('');
     try {
       const text = await runOcr(file);
       setOcrText(text);
@@ -102,7 +117,7 @@ export default function ScanPage() {
           body: JSON.stringify({ headwords: base.map((item) => item.headword) })
         });
         if (!response.ok) {
-          throw new Error('辞書検索に失敗しました');
+          throw new Error('意味検索に失敗しました');
         }
         const data = (await response.json()) as {
           found: Array<{
@@ -195,12 +210,12 @@ export default function ScanPage() {
           body: JSON.stringify({ entries: commitEntries })
         });
       } catch {
-        setStatus('コミットに失敗しました（ローカル保存は完了）');
+        setStatus('クラウド保存に失敗しました（この端末には保存されています）');
       }
     }
 
     await incrementEvent('deck_created');
-    setStatus('デッキを作成しました。レビューに移動します。');
+    setStatus('単語ノートを作りました。復習ページへ移動します。');
     window.history.pushState({}, '', `/review/${deck.deckId}`);
     window.dispatchEvent(new PopStateEvent('popstate'));
   };
@@ -208,9 +223,9 @@ export default function ScanPage() {
   return (
     <section className="section-grid">
       <div className="card">
-        <h2>1. 写真 & OCR</h2>
-        <p className="notice">画像とOCR全文は端末内のみで処理します。</p>
-        <label htmlFor="imageInput">画像を選択（カメラ/ファイル）</label>
+        <h2>1. 写真を読み取る</h2>
+        <p className="notice">写真と読み取り結果は、この端末の中だけで処理されます。</p>
+        <label htmlFor="imageInput">写真をえらぶ（カメラ/ファイル）</label>
         <input
           id="imageInput"
           type="file"
@@ -221,91 +236,92 @@ export default function ScanPage() {
             if (file) void handleImage(file);
           }}
         />
-        <p>
-          OCR状態: {ocrStatus} {ocrError ? `(${ocrError})` : ''}
-        </p>
-        {ocrStatus === 'running' && <p>OCR実行中...</p>}
-        <label>OCR結果（編集可）</label>
+        <p className="badge">読み取り状態: {ocrStatusLabel[ocrStatus]}</p>
+        {ocrError && <p className="counter">{ocrError}</p>}
+        <label>読み取り結果（ここで直せます）</label>
         <textarea
           value={ocrText}
           onChange={(event) => setOcrText(event.target.value)}
-          placeholder="OCR結果を確認・修正してください"
+          placeholder="文字がまちがっていたら、ここで直してください"
         />
         <button
           className="secondary"
           onClick={handleExtract}
           disabled={!ocrText.trim() || ocrStatus === 'running'}
         >
-          未知語抽出
+          単語をひろう
         </button>
       </div>
 
       <div className="card">
-        <h2>2. 未知語候補</h2>
+        <h2>2. 単語と意味をえらぶ</h2>
         <p className="notice">
-          辞書検索は単語のみ送信します。本文やOCR全文は送信しません。
+          意味検索では単語だけ送信されます。本文ぜんぶは送信されません。
         </p>
-        {lookupStatus === 'loading' && <p>辞書検索中...</p>}
+        <p className="badge">意味検索: {lookupStatusLabel[lookupStatus]}</p>
         {lookupError && <p className="counter">{lookupError}</p>}
-        <div className="word-grid" style={{ maxHeight: 320, overflow: 'auto' }}>
+        <p className="counter">選択中: {selectedCandidates.length}語</p>
+        <div className="word-grid candidate-grid">
           {candidates.map((item) => (
-            <div key={item.headwordNorm} className="word-item">
-              <div style={{ flex: 1 }}>
-                <strong>{item.headword}</strong>
-                <small> x{item.count}</small>
-                <div style={{ marginTop: 6 }}>
+            <div key={item.headwordNorm} className="word-item candidate-item">
+              <div className="candidate-row">
+                <label className="candidate-toggle">
                   <input
-                    type="text"
-                    value={item.meaning}
-                    placeholder={item.source === 'found' ? '辞書候補' : '意味を入力'}
-                    maxLength={LIMITS.meaning}
-                    onChange={(event) => updateMeaning(item.headwordNorm, event.target.value)}
-                    disabled={item.source === 'found'}
+                    type="checkbox"
+                    checked={item.selected}
+                    onChange={() => toggleCandidate(item.headwordNorm)}
                   />
-                  {item.source === 'missing' && item.meaning.length === 0 && (
-                    <div className="counter">意味を入力してください</div>
-                  )}
+                  <span>追加する</span>
+                </label>
+                <div>
+                  <strong>{item.headword}</strong>
+                  <small className="candidate-meta">出現 {item.count}回</small>
                 </div>
               </div>
               <input
-                type="checkbox"
-                checked={item.selected}
-                onChange={() => toggleCandidate(item.headwordNorm)}
+                type="text"
+                value={item.meaning}
+                placeholder={item.source === 'found' ? '辞書の意味（必要なら直せる）' : '意味を入力'}
+                maxLength={LIMITS.meaning}
+                onChange={(event) => updateMeaning(item.headwordNorm, event.target.value)}
               />
+              {item.source === 'missing' && item.meaning.length === 0 && (
+                <div className="counter">意味を入れてください</div>
+              )}
             </div>
           ))}
-          {candidates.length === 0 && <p>候補がありません。</p>}
+          {candidates.length === 0 && <p>まだ候補がありません。上で「単語をひろう」を押してね。</p>}
         </div>
       </div>
 
       <div className="card">
-        <h2>3. デッキ作成 & レビュー開始</h2>
-        <label>デッキ名</label>
+        <h2>3. 単語ノートを作る</h2>
+        <label>ノート名</label>
         <input
           type="text"
           value={deckTitle}
           onChange={(event) => setDeckTitle(event.target.value)}
-          placeholder="例: Textbook Unit 1"
+          placeholder="例: テスト前の英単語"
         />
         <button onClick={handleCreateDeck} disabled={!canCreateDeck}>
-          デッキ作成 → レビューへ
+          ノートを作って復習する
         </button>
         {status && <p className="counter">{status}</p>}
       </div>
 
       <div className="card">
-        <h2>デッキ一覧</h2>
-        {decks.length === 0 && <p>まだデッキがありません。</p>}
+        <h2>作ったノート</h2>
+        {decks.length === 0 && <p>まだノートがありません。</p>}
         <div className="word-grid">
           {decks.map((deck) => (
             <div key={deck.deckId} className="word-item">
               <div>
                 <strong>{deck.title}</strong>
                 <br />
-                <small>{deck.headwordNorms.length} 語</small>
+                <small>{deck.headwordNorms.length}語</small>
               </div>
               <Link className="pill" to={`/review/${deck.deckId}`}>
-                レビュー
+                復習する
               </Link>
             </div>
           ))}

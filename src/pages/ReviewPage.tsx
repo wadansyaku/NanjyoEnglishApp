@@ -3,10 +3,10 @@ import { Link } from '../lib/router';
 import { getDeck, getDueCard, incrementEvent, reviewCard, type DueCard } from '../db';
 
 const gradeLabels = [
-  { key: 'again', label: 'Again', xp: 0 },
-  { key: 'hard', label: 'Hard', xp: 1 },
-  { key: 'good', label: 'Good', xp: 2 },
-  { key: 'easy', label: 'Easy', xp: 3 }
+  { key: 'again', label: 'もう1回', xp: 0 },
+  { key: 'hard', label: 'むずかしい', xp: 1 },
+  { key: 'good', label: 'できた', xp: 2 },
+  { key: 'easy', label: 'かんたん', xp: 3 }
 ] as const;
 
 type ReviewPageProps = {
@@ -43,13 +43,13 @@ export default function ReviewPage({ deckId }: ReviewPageProps) {
     await reviewCard(deckIdValue, dueCard.srs.cardId, grade);
     await incrementEvent('review_done');
     setShowAnswer(false);
-    setStatus('レビューを記録しました。');
+    setStatus('復習を記録しました。');
     await load();
   };
 
   const reviewTitle = useMemo(() => {
-    if (!deckTitle) return 'デッキが見つかりません';
-    return `レビュー: ${deckTitle}`;
+    if (!deckTitle) return 'ノートが見つかりません';
+    return `復習ノート: ${deckTitle}`;
   }, [deckTitle]);
 
   return (
@@ -59,25 +59,27 @@ export default function ReviewPage({ deckId }: ReviewPageProps) {
         {!deckTitle && (
           <p>
             <Link className="pill" to="/scan">
-              /scan に戻る
+              写真で単語にもどる
             </Link>
           </p>
         )}
-        {deckTitle && !dueCard && <p>いま復習対象のカードがありません。</p>}
+        {deckTitle && !dueCard && <p>いま復習するカードはありません。おつかれさま。</p>}
         {deckTitle && dueCard && (
           <div>
-            <div className="badge">Headword: {dueCard.lexeme.headword}</div>
+            <p className="notice">先に意味を思い出してから「意味を見る」を押そう。</p>
+            <div className="badge">単語: {dueCard.lexeme.headword}</div>
             {showAnswer ? (
               <p style={{ marginTop: 12 }}>意味: {dueCard.lexeme.meaningJa}</p>
             ) : (
               <button className="secondary" onClick={() => setShowAnswer(true)}>
-                答えを見る
+                意味を見る
               </button>
             )}
-            <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+            <div className="grade-grid">
               {gradeLabels.map((item) => (
-                <button key={item.key} onClick={() => handleReview(item.key)}>
-                  {item.label} (+{item.xp}XP)
+                <button className="grade-button" key={item.key} onClick={() => handleReview(item.key)}>
+                  {item.label}
+                  <span>+{item.xp}XP</span>
                 </button>
               ))}
             </div>
