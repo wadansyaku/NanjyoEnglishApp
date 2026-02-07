@@ -2,5 +2,6 @@ node_modules/
 dist/
 *.tsbuildinfo
 .wrangler/
+.codex/
 .DS_Store
 package-lock.json
