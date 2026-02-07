@@ -84,6 +84,18 @@
   - `できた` (+2XP)
   - `かんたん` (+3XP)
 
+## Route: `/review`
+
+### Goal
+
+今日の復習量を確認し、どのノートから始めるか迷わない状態にする。
+
+### Main copy
+
+- Screen title: `今日のReview`
+- Total due label: `残りカード`
+- Deck rows: `今日: x / 全体: y`
+
 ## Route: `/character`
 
 ### Goal
@@ -121,8 +133,10 @@
   - `写真から単語を見つけて、自分だけの単語ノートで復習しよう。`
 - Nav labels:
   - `/scan` -> `写真で単語`
+  - `/review` -> `Review`
   - `/character` -> `がんばり記録`
   - feedback -> `アプリに意見`
+  - settings -> `設定`
 
 ## Feedback Form
 
@@ -138,6 +152,18 @@
   - 背景タップ
   - `Esc` キー
   - `×` ボタン
+
+## Route: `/settings`
+
+### Goal
+
+OCRのデバッグ可視化や既定値をユーザー側で調整できる状態にする。
+
+### Main controls
+
+- OCRデバッグトグル
+- 既定PSM（6/11/7）
+- 前処理既定値（grayscale/threshold/invert/contrast/brightness/maxSide）
 
 ## Accessibility Baseline
 

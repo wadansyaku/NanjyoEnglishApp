@@ -1,32 +1,44 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import ScanPage from './pages/ScanPage';
 import ReviewPage from './pages/ReviewPage';
+import ReviewHomePage from './pages/ReviewHomePage';
 import CharacterPage from './pages/CharacterPage';
+import SettingsPage from './pages/SettingsPage';
 import { Link, usePath } from './lib/router';
 import { ensureAuth } from './lib/auth';
+import { loadLastOcrMetrics } from './lib/feedbackMeta';
+import { getXpSummary } from './db';
+import { loadSettings, saveSettings, summarizeDevice, type AppSettings } from './lib/settings';
+import { Modal, ToastHost, type ToastItem } from './components/ui';
+
+type FeedbackType = 'ocr' | 'ux' | 'bug' | 'feature';
+
+type ToastLevel = ToastItem['type'];
+
+const makeToastId = () => Date.now() + Math.floor(Math.random() * 1000);
 
 export default function App() {
   const { path, navigate } = usePath();
   const normalizedPath = path === '/' ? '/scan' : path;
+
+  const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [feedbackOpen, setFeedbackOpen] = useState(false);
-  const [feedbackType, setFeedbackType] = useState<'ocr' | 'ux' | 'bug' | 'feature'>('ux');
+  const [feedbackType, setFeedbackType] = useState<FeedbackType>('ux');
   const [feedbackMessage, setFeedbackMessage] = useState('');
   const [feedbackStatus, setFeedbackStatus] = useState('');
   const [feedbackSending, setFeedbackSending] = useState(false);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [xpLabel, setXpLabel] = useState('Lv.1 / 0XP');
 
-  if (path === '/') {
-    navigate('/scan');
-  }
+  useEffect(() => {
+    saveSettings(settings);
+  }, [settings]);
 
-  let content: JSX.Element = <ScanPage />;
-  if (normalizedPath.startsWith('/review/')) {
-    const deckId = normalizedPath.replace('/review/', '');
-    content = <ReviewPage deckId={deckId} />;
-  } else if (normalizedPath === '/character') {
-    content = <CharacterPage />;
-  } else if (normalizedPath === '/scan') {
-    content = <ScanPage />;
-  }
+  useEffect(() => {
+    if (path === '/') {
+      navigate('/scan');
+    }
+  }, [path, navigate]);
 
   useEffect(() => {
     if (!feedbackOpen) return;
@@ -44,13 +56,40 @@ export default function App() {
     };
   }, [feedbackOpen]);
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const summary = await getXpSummary();
+      if (cancelled) return;
+      setXpLabel(`Lv.${summary.level} / ${summary.xpTotal}XP`);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [normalizedPath]);
+
+  const showToast = useCallback((message: string, type: ToastLevel = 'info') => {
+    const id = makeToastId();
+    setToasts((prev) => [...prev, { id, message, type }]);
+    window.setTimeout(() => {
+      setToasts((prev) => prev.filter((item) => item.id !== id));
+    }, 2800);
+  }, []);
+
+  const handleChangeSettings = useCallback((next: AppSettings) => {
+    setSettings(next);
+    showToast('設定を保存しました。', 'success');
+  }, [showToast]);
+
   const handleSendFeedback = async () => {
-    const message = feedbackMessage.replace(/[\r\n]+/g, ' ').trim();
+    const message = feedbackMessage.replace(/[\r\n]+/g, ' ').trim().slice(0, 200);
     if (!message) return;
     setFeedbackSending(true);
     setFeedbackStatus('');
+
     try {
       const session = await ensureAuth();
+      const ocrMetrics = loadLastOcrMetrics();
       const response = await fetch('/api/v1/feedback', {
         method: 'POST',
         headers: {
@@ -62,98 +101,124 @@ export default function App() {
           message,
           contextJson: {
             screen: normalizedPath,
-            userAgent: navigator.userAgent,
+            device: summarizeDevice(navigator.userAgent),
+            latestOcr: ocrMetrics
+              ? {
+                  preprocessMs: Math.round(ocrMetrics.preprocessMs),
+                  ocrMs: Math.round(ocrMetrics.ocrMs),
+                  confidence: ocrMetrics.confidence,
+                  psm: ocrMetrics.psm
+                }
+              : null,
             timestamp: new Date().toISOString()
           }
         })
       });
+
       if (!response.ok) {
         throw new Error('送信に失敗しました');
       }
+
       setFeedbackMessage('');
       setFeedbackStatus('送信しました。ありがとうございます！');
+      showToast('意見を送信しました。', 'success');
     } catch (error) {
-      setFeedbackStatus((error as Error).message);
+      const messageText = (error as Error).message;
+      setFeedbackStatus(messageText);
+      showToast(messageText, 'error');
     } finally {
       setFeedbackSending(false);
     }
   };
 
+  const content = useMemo(() => {
+    if (normalizedPath.startsWith('/review/')) {
+      const deckId = normalizedPath.replace('/review/', '');
+      return <ReviewPage deckId={deckId} showToast={showToast} />;
+    }
+    if (normalizedPath === '/review') {
+      return <ReviewHomePage />;
+    }
+    if (normalizedPath === '/character') {
+      return <CharacterPage />;
+    }
+    if (normalizedPath === '/settings') {
+      return <SettingsPage settings={settings} onChangeSettings={handleChangeSettings} />;
+    }
+    return <ScanPage settings={settings} showToast={showToast} navigate={navigate} />;
+  }, [normalizedPath, navigate, settings, showToast, handleChangeSettings]);
+
+  const isScanActive = normalizedPath === '/scan';
+  const isReviewActive = normalizedPath === '/review' || normalizedPath.startsWith('/review/');
+  const isCharacterActive = normalizedPath === '/character';
+
   return (
-    <main>
-      <header>
-        <h1>えいたんメイト</h1>
-        <p>写真から単語を見つけて、自分だけの単語ノートで復習しよう。</p>
-        <nav className="pill-group">
-          <Link className="pill" to="/scan">
-            📷 写真で単語
-          </Link>
-          <Link className="pill" to="/character">
-            ⭐ がんばり記録
+    <main className="app-shell">
+      <header className="app-header">
+        <div>
+          <h1>えいたんメイト</h1>
+          <p>中1向け: 写真→OCR→単語ノート→Review</p>
+        </div>
+        <div className="app-header-actions">
+          <span className="badge">{xpLabel}</span>
+          <Link className="pill" to="/settings">
+            ⚙️ 設定
           </Link>
           <button className="pill" type="button" onClick={() => setFeedbackOpen(true)}>
-            💬 アプリに意見
+            💬 意見
           </button>
-        </nav>
+        </div>
       </header>
 
-      {content}
+      <div className="app-content">{content}</div>
 
-      {feedbackOpen && (
-        <div className="modal-backdrop" role="presentation" onClick={() => setFeedbackOpen(false)}>
-          <section
-            className="card modal-card"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="feedback-modal-title"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="modal-header-row">
-              <h2 id="feedback-modal-title">アプリへの意見</h2>
-              <button
-                className="modal-close"
-                type="button"
-                aria-label="閉じる"
-                onClick={() => setFeedbackOpen(false)}
-              >
-                ×
-              </button>
-            </div>
-            <p className="notice">
-              名前・連絡先・本文の全文は書かないで、短く教えてください。
-            </p>
-            <label>どの内容？</label>
-            <select
-              value={feedbackType}
-              onChange={(event) =>
-                setFeedbackType(event.target.value as 'ocr' | 'ux' | 'bug' | 'feature')
-              }
-            >
-              <option value="ocr">読み取り（OCR）</option>
-              <option value="ux">使いやすさ</option>
-              <option value="bug">うまく動かない</option>
-              <option value="feature">ほしい機能</option>
-            </select>
-            <label style={{ marginTop: 12 }}>メッセージ（200文字まで）</label>
-            <input
-              type="text"
-              value={feedbackMessage}
-              maxLength={200}
-              onChange={(event) => setFeedbackMessage(event.target.value)}
-              placeholder="例: 写真が暗いときに読み取りしづらい"
-            />
-            <p className="counter">{feedbackMessage.trim().length}/200</p>
-            <button
-              style={{ marginTop: 12 }}
-              onClick={handleSendFeedback}
-              disabled={feedbackSending || feedbackMessage.trim().length === 0}
-            >
-              意見を送る
-            </button>
-            {feedbackStatus && <p className="counter">{feedbackStatus}</p>}
-          </section>
-        </div>
-      )}
+      <nav className="bottom-nav" aria-label="メインナビゲーション">
+        <Link className={`bottom-nav-item ${isScanActive ? 'active' : ''}`} to="/scan">
+          <span>📷</span>
+          <small>Scan</small>
+        </Link>
+        <Link className={`bottom-nav-item ${isReviewActive ? 'active' : ''}`} to="/review">
+          <span>📝</span>
+          <small>Review</small>
+        </Link>
+        <Link className={`bottom-nav-item ${isCharacterActive ? 'active' : ''}`} to="/character">
+          <span>⭐</span>
+          <small>Character</small>
+        </Link>
+      </nav>
+
+      <Modal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} title="アプリへの意見">
+        <p className="notice">名前・連絡先・本文の全文は書かず、短文で送ってください。</p>
+        <label>どの内容？</label>
+        <select
+          value={feedbackType}
+          onChange={(event) => setFeedbackType(event.target.value as FeedbackType)}
+        >
+          <option value="ocr">読み取り（OCR）</option>
+          <option value="ux">使いやすさ</option>
+          <option value="bug">うまく動かない</option>
+          <option value="feature">ほしい機能</option>
+        </select>
+        <label style={{ marginTop: 12 }}>メッセージ（200文字まで）</label>
+        <input
+          type="text"
+          value={feedbackMessage}
+          maxLength={200}
+          onChange={(event) => setFeedbackMessage(event.target.value)}
+          placeholder="例: OCRの文字欠けを減らしたい"
+        />
+        <p className="counter">{feedbackMessage.trim().length}/200</p>
+        <button
+          style={{ marginTop: 12 }}
+          onClick={handleSendFeedback}
+          disabled={feedbackSending || feedbackMessage.trim().length === 0}
+        >
+          {feedbackSending ? '送信中…' : '意見を送る'}
+        </button>
+        {feedbackStatus && <p className="counter">{feedbackStatus}</p>}
+      </Modal>
+
+      <ToastHost items={toasts} />
     </main>
   );
 }
