@@ -1,0 +1,22 @@
+﻿entry_id,headword_norm,meaning_ja_short,decision_pos,decision_reason,reviewer,status
+WB000008,base,【名】基礎；土台,noun,post_audit_mismatch_21_fix,post_audit_v4,done
+WB000035,candle,【名】ろうそく,noun,post_audit_mismatch_21_fix,post_audit_v4,done
+WB000068,gently,【副】優しく；親切に,adverb,post_audit_mismatch_21_fix,post_audit_v4,done
+WB000699,mile,【名】マイル（1.609km）,noun,post_audit_mismatch_21_fix,post_audit_v4,done
+WB000925,stair,【名】階段,noun,post_audit_mismatch_21_fix,post_audit_v4,done
+WB001165,metal,金属（[副] gold）,noun,post_audit_mismatch_21_fix,post_audit_v4,done
+WB001300,acid rain,【名】酸性雨,phrase,post_audit_mismatch_21_fix,post_audit_v4,done
+WB001408,new york,【名】ニューヨーク,phrase,post_audit_mismatch_21_fix,post_audit_v4,done
+WB001510,less,より少ない 【副】より少なく,function,post_audit_mismatch_21_fix,post_audit_v4,done
+WB002171,audience,観客；聴衆（[副] guest）,noun,post_audit_mismatch_21_fix,post_audit_v4,done
+WB002441,ill,【形】病気の（ill - worse - worst）,adjective,post_audit_mismatch_21_fix,post_audit_v4,done
+WB002644,senior,【形】高齢者の,adjective,post_audit_mismatch_21_fix,post_audit_v4,done
+WB002777,attractive,【形】魅力的な,adjective,post_audit_mismatch_21_fix,post_audit_v4,done
+WB002829,electric,【形】電気の,adjective,post_audit_mismatch_21_fix,post_audit_v4,done
+WB002867,major,主要な；大部分の；重大な 【動】専攻する（in）【名】専攻科目,adjective,post_audit_mismatch_21_fix,post_audit_v4,done
+WB002919,republic,【名】共和国,noun,post_audit_mismatch_21_fix,post_audit_v4,done
+WB002939,topic,【名】話題；トピック,noun,post_audit_mismatch_21_fix,post_audit_v4,done
+WB002946,trap,【名】わな,noun,post_audit_mismatch_21_fix,post_audit_v4,done
+WB002974,elderly,【形】年配の,adjective,post_audit_mismatch_21_fix,post_audit_v4,done
+WB003004,stranger,【名】見知らぬ人；（ある場所に）不慣れな人,noun,post_audit_mismatch_21_fix,post_audit_v4,done
+WB003007,visually,【副】視覚的に（は）；目で見て,adverb,post_audit_mismatch_21_fix,post_audit_v4,done
