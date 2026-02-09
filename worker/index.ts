@@ -4310,7 +4310,9 @@ const ensureDailyDungeon = async (env: Env) => {
         env.DB,
         `INSERT INTO game_dungeons_daily (date, dungeon_id, title, description)
          VALUES (?1, ?2, ?3, ?4)
-         ON CONFLICT(date) DO NOTHING`
+         ON CONFLICT(date) DO UPDATE SET
+           title = excluded.title,
+           description = excluded.description`
       ),
       dateKey,
       dungeonId,
