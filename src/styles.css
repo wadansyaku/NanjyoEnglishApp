@@ -916,6 +916,91 @@ button:disabled {
   height: 190px;
 }
 
+.review-flip-card {
+  position: relative;
+  width: 100%;
+  min-height: 188px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  box-shadow: none;
+  overflow: visible;
+  perspective: 1000px;
+  margin-bottom: 8px;
+}
+
+.review-flip-card::before {
+  display: none;
+}
+
+.review-flip-card:hover:not(:disabled),
+.review-flip-card:active:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+}
+
+.review-flip-face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding: 18px 14px;
+  border-radius: 16px;
+  border: 2px solid var(--primary-light);
+  box-shadow: 0 8px 18px rgba(255, 126, 179, 0.16);
+  backface-visibility: hidden;
+  transition: transform 0.35s ease, opacity 0.35s ease;
+}
+
+.review-flip-front {
+  background: linear-gradient(135deg, #FFF8FA, #FFF);
+  transform: rotateY(0deg);
+  opacity: 1;
+}
+
+.review-flip-back {
+  background: linear-gradient(135deg, var(--success-light), #FFF);
+  border-color: var(--success);
+  transform: rotateY(180deg);
+  opacity: 0;
+}
+
+.review-flip-card.is-back .review-flip-front {
+  transform: rotateY(-180deg);
+  opacity: 0;
+}
+
+.review-flip-card.is-back .review-flip-back {
+  transform: rotateY(0deg);
+  opacity: 1;
+}
+
+.review-flip-face strong {
+  font-size: 1.65rem;
+  font-weight: 800;
+  color: var(--primary-dark);
+  text-align: center;
+  line-height: 1.25;
+}
+
+.review-flip-back strong {
+  color: var(--text-primary);
+  font-size: 1.35rem;
+}
+
+.review-flip-face small {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.review-flip-hint {
+  letter-spacing: 0.08em;
+}
+
 .grade-button {
   display: flex;
   flex-direction: column;

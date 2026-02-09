@@ -5,6 +5,7 @@ export type AppSettings = {
   ocrDebug: boolean;
   defaultPsm: OcrPsm;
   defaultPreprocess: OcrPreprocessOptions;
+  autoPronounce: boolean;
   cloudOcrEnabled: boolean;
   aiMeaningAssistEnabled: boolean;
   cloudOcrConsentAccepted: boolean;
@@ -30,6 +31,7 @@ export const defaultSettings: AppSettings = {
     brightness: 2,
     maxSide: 1900
   },
+  autoPronounce: true,
   cloudOcrEnabled: false,
   aiMeaningAssistEnabled: false,
   cloudOcrConsentAccepted: false,
@@ -103,6 +105,10 @@ export const loadSettings = (): AppSettings => {
         typeof parsed.cloudOcrEnabled === 'boolean'
           ? parsed.cloudOcrEnabled
           : defaultSettings.cloudOcrEnabled,
+      autoPronounce:
+        typeof parsed.autoPronounce === 'boolean'
+          ? parsed.autoPronounce
+          : defaultSettings.autoPronounce,
       aiMeaningAssistEnabled:
         typeof parsed.aiMeaningAssistEnabled === 'boolean'
           ? parsed.aiMeaningAssistEnabled

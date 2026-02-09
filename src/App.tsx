@@ -178,14 +178,14 @@ export default function App() {
   const content = useMemo(() => {
     if (normalizedPath.startsWith('/review/')) {
       const deckId = normalizedPath.replace('/review/', '');
-      return <ReviewPage deckId={deckId} showToast={showToast} />;
+      return <ReviewPage deckId={deckId} settings={settings} showToast={showToast} />;
     }
     if (normalizedPath.startsWith('/test/')) {
       const deckId = normalizedPath.replace('/test/', '');
       return <TestPage deckId={deckId} />;
     }
     if (normalizedPath === '/review') {
-      return <ReviewHomePage />;
+      return <ReviewHomePage settings={settings} />;
     }
     if (normalizedPath === '/character') {
       return <CharacterPage />;

@@ -215,6 +215,7 @@ npx wrangler secret put WORKERS_AI_API_TOKEN
 - 初回 `POST /api/v1/bootstrap` で `userId` / `apiKey` 発行
 - 以後 `/api/v1/*` は `Authorization: Bearer <apiKey>`
 - サーバ側は `apiKey` のSHA-256ハッシュのみ保持
+- 認証キーは `auth_sessions` で端末ごとに管理（同時ログインしても他端末を失効させない）
 - メールログインはマジックリンク方式（パスワード不要）
 - セキュリティ強化:
   - マジックリンク送信は「IP / メール」単位でレート制限
@@ -222,6 +223,7 @@ npx wrangler secret put WORKERS_AI_API_TOKEN
   - トークンは1回のみ使用可（原子的に消費）
   - 検証試行にもIPレート制限を適用
   - 期限切れ/使用済み/不正トークンを明確に判定
+  - `POST /api/v1/auth/logout` で現在端末セッションのみ失効
 
 ## API
 
@@ -240,7 +242,11 @@ npx wrangler secret put WORKERS_AI_API_TOKEN
 
 - 既存ユーザーのメール連携/変更用リンクを送信
 
-### 4) `POST /api/v1/lexemes/lookup`
+### 4) `POST /api/v1/auth/logout`
+
+- 現在のBearerセッションのみを失効
+
+### 5) `POST /api/v1/lexemes/lookup`
 
 - 入力: `{ headwords: string[] }`
 - 出力: `{ found: [...], missing: [...] }`
@@ -249,7 +255,7 @@ npx wrangler secret put WORKERS_AI_API_TOKEN
   2. `core_words`
   3. `lexemes` (legacy)
 
-### 5) `POST /api/v1/lexemes/commit`
+### 6) `POST /api/v1/lexemes/commit`
 
 - 入力: `{ entries: [{ headword, meaningJa, exampleEn?, note? }] }`
 - 出力: `{ ok: true, inserted: number }`
@@ -260,7 +266,7 @@ npx wrangler secret put WORKERS_AI_API_TOKEN
 - `exampleEn` / `note` 160文字以内
 - 改行は拒否
 
-### 6) `POST /api/v1/ocr/cloud`
+### 7) `POST /api/v1/ocr/cloud`
 
 - 入力:
 
@@ -281,7 +287,7 @@ npx wrangler secret put WORKERS_AI_API_TOKEN
 }
 ```
 
-### 7) `POST /api/v1/ai/meaning-suggest`
+### 8) `POST /api/v1/ai/meaning-suggest`
 
 - 入力: `{ "headwords": ["example", "word"] }`
 - 出力: `{ "suggestions": [{ "headword": "example", "meaningJa": "例" }] }`
@@ -291,88 +297,88 @@ npx wrangler secret put WORKERS_AI_API_TOKEN
 - `meaningJa` は80文字以内・改行禁止
 - 長文生成/本文翻訳は行わない
 
-### 8) `POST /api/v1/feedback`
+### 9) `POST /api/v1/feedback`
 
 - 入力: `{ type, message, contextJson? }`
 - `contextJson` は短く（2000文字以内）、本文/OCR全文は禁止
 
-### 9) `GET /api/v1/wordbank/decks`
+### 10) `GET /api/v1/wordbank/decks`
 
 - 出力: `deck` 一覧（タイトル、語数、source）
 
-### 10) `GET /api/v1/wordbank/curriculum`
+### 11) `GET /api/v1/wordbank/curriculum`
 
 - 出力: 速習/標準トラックとステップ情報（学習順・語数・推奨区切り）
 
-### 11) `GET /api/v1/wordbank/decks/:deckId/words`
+### 12) `GET /api/v1/wordbank/decks/:deckId/words`
 
 - 出力: 指定デッキの語彙一覧（`headword_norm`, `meaning_ja_short`）
 
-### 12) `POST /api/v1/wordbank/decks/words-batch`
+### 13) `POST /api/v1/wordbank/decks/words-batch`
 
 - 入力: `{ deckIds: string[] }`
 - 出力: 複数デッキを順序維持で結合し、重複除去した語彙一覧
 - 備考: カリキュラム内部では `slice:<deckId>:<start>:<end>` 形式で範囲分割デッキを扱える
 
-### 13) `POST /api/v1/wordbank/admin/upsert-words` (Admin)
+### 14) `POST /api/v1/wordbank/admin/upsert-words` (Admin)
 
 - ヘッダ: `x-admin-token` または `Authorization: Bearer <ADMIN_TOKEN>`
 - 入力: words/decks のupsert
 
-### 14) `GET /api/v1/admin/students` (Admin)
+### 15) `GET /api/v1/admin/students` (Admin)
 
 - 生徒ごとの進捗サマリ（Lv/XP/履修語数/最終同期）を返す
 
-### 15) `GET /api/v1/admin/students/:userId/words` (Admin)
+### 16) `GET /api/v1/admin/students/:userId/words` (Admin)
 
 - 指定生徒の履修語（テスト作成元）を返す
 
-### 16) `GET /api/v1/admin/feedback` (Admin)
+### 17) `GET /api/v1/admin/feedback` (Admin)
 
 - 最新のアプリ意見一覧を返す（screen/device などの短い context を含む）
 
-### 17) `GET /api/v1/admin/settings` (Admin)
+### 18) `GET /api/v1/admin/settings` (Admin)
 
 - 全ユーザー向けの共通設定を返す
 
-### 18) `POST /api/v1/admin/settings` (Admin)
+### 19) `POST /api/v1/admin/settings` (Admin)
 
 - 全ユーザー向けの共通設定を更新する
 
-### 19) `GET /api/v1/settings/public`
+### 20) `GET /api/v1/settings/public`
 
 - ログイン不要。全ユーザー向け共通設定を返す
 
-### 20) `POST /api/v1/community/changesets`
+### 21) `POST /api/v1/community/changesets`
 
 - 提案（changeset）を作成
 
-### 21) `POST /api/v1/community/changesets/:id/items`
+### 22) `POST /api/v1/community/changesets/:id/items`
 
 - 提案に単語差分を追加
 
-### 22) `POST /api/v1/community/changesets/:id/submit`
+### 23) `POST /api/v1/community/changesets/:id/submit`
 
 - `draft -> proposed`
 
-### 23) `POST /api/v1/community/changesets/:id/review`
+### 24) `POST /api/v1/community/changesets/:id/review`
 
 - `approve / request_changes / comment`
 
-### 24) `POST /api/v1/community/changesets/:id/merge`
+### 25) `POST /api/v1/community/changesets/:id/merge`
 
 - editor以上が実行
 - canonical更新 + history追記
 
-### 25) `GET /api/v1/community/tasks`
+### 26) `GET /api/v1/community/tasks`
 
 - 今日の冒険タスクと利用可能トークンを取得
 
-### 26) `POST /api/v1/community/tasks/:taskId/complete`
+### 27) `POST /api/v1/community/tasks/:taskId/complete`
 
 - タスク完了処理。条件達成で報酬デッキ（headword集合）を返却
 
-### 27) `POST /api/v1/usage/report`
+### 28) `POST /api/v1/usage/report`
 
 - 入力: `{ minutesToday }`
 - サーバで `proofread_tokens_today` を再計算

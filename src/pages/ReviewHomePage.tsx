@@ -22,6 +22,8 @@ import {
   type WordbankCurriculumStep,
   type WordbankCurriculumTrack
 } from '../lib/wordbank';
+import type { AppSettings } from '../lib/settings';
+import { speak, stopSpeaking } from '../lib/tts';
 
 type QuickReviewState = 'idle' | 'reviewing' | 'complete';
 
@@ -37,7 +39,11 @@ const resolveChunkSize = (step: WordbankCurriculumStep) => {
   return 10;
 };
 
-export default function ReviewHomePage() {
+type ReviewHomePageProps = {
+  settings: AppSettings;
+};
+
+export default function ReviewHomePage({ settings }: ReviewHomePageProps) {
   const { navigate } = usePath();
 
   const [summaries, setSummaries] = useState<DeckDueSummary[]>([]);
@@ -121,6 +127,18 @@ export default function ReviewHomePage() {
     void loadWordbankDecks();
     void loadCurriculum();
   }, [loadCurriculum, loadData, loadWordbankDecks]);
+
+  useEffect(() => {
+    if (quickState !== 'reviewing' || !settings.autoPronounce || showAnswer) return;
+    const card = quickCards[currentIndex];
+    if (!card) return;
+    if (!speak(card.lexeme.headword)) return;
+    return () => {
+      stopSpeaking();
+    };
+  }, [quickState, settings.autoPronounce, quickCards, currentIndex, showAnswer]);
+
+  useEffect(() => () => stopSpeaking(), []);
 
   const handleStartWordbankDeck = async (deckId: string) => {
     if (!deckId) return;
@@ -245,6 +263,7 @@ export default function ReviewHomePage() {
 
   const handleGrade = async (grade: 'again' | 'hard' | 'good' | 'easy') => {
     const card = quickCards[currentIndex];
+    stopSpeaking();
     await reviewCard(card.srs.deckId, card.srs.cardId, grade);
 
     if (currentIndex + 1 < quickCards.length) {
@@ -257,6 +276,7 @@ export default function ReviewHomePage() {
   };
 
   const handleFinishQuickReview = () => {
+    stopSpeaking();
     setQuickState('idle');
     setQuickCards([]);
     setCurrentIndex(0);
@@ -274,38 +294,44 @@ export default function ReviewHomePage() {
           </div>
 
           <div className="review-card" style={{ textAlign: 'center', padding: 24 }}>
-            <p style={{ fontSize: '1.5rem', fontWeight: 600, marginBottom: 16 }}>
-              {card.lexeme.headword}
-            </p>
+            <button
+              type="button"
+              className={`review-flip-card ${showAnswer ? 'is-back' : ''}`}
+              onClick={() => setShowAnswer((prev) => !prev)}
+              aria-label={showAnswer ? '英単語面に戻す' : '意味面へめくる'}
+            >
+              <span className="review-flip-face review-flip-front">
+                <small className="review-flip-hint">ENGLISH</small>
+                <strong>{card.lexeme.headword}</strong>
+                <small>タップで意味へ</small>
+              </span>
+              <span className="review-flip-face review-flip-back">
+                <small className="review-flip-hint">にほんご</small>
+                <strong>{card.lexeme.meaningJa}</strong>
+                <small>タップで英語へ</small>
+              </span>
+            </button>
 
-            {!showAnswer && (
-              <button onClick={() => setShowAnswer(true)} style={{ width: '100%', marginTop: 16 }}>
-                答えを見る
+            <div className="scan-inline-actions" style={{ marginTop: 10 }}>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => {
+                  stopSpeaking();
+                  speak(card.lexeme.headword);
+                }}
+              >
+                🔊 発音
               </button>
-            )}
+            </div>
 
             {showAnswer && (
-              <>
-                <p
-                  style={{
-                    fontSize: '1.2rem',
-                    color: 'var(--primary)',
-                    marginBottom: 24,
-                    padding: 16,
-                    background: 'rgba(255, 126, 179, 0.1)',
-                    borderRadius: 12
-                  }}
-                >
-                  {card.lexeme.meaningJa}
-                </p>
-
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
-                  <button className="secondary" onClick={() => handleGrade('again')}>🔄 もう一回</button>
-                  <button className="secondary" onClick={() => handleGrade('hard')}>😓 難しい</button>
-                  <button onClick={() => handleGrade('good')}>😊 できた</button>
-                  <button onClick={() => handleGrade('easy')}>🌟 かんたん</button>
-                </div>
-              </>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, marginTop: 14 }}>
+                <button className="secondary" onClick={() => handleGrade('again')}>🔄 もう一回</button>
+                <button className="secondary" onClick={() => handleGrade('hard')}>😓 難しい</button>
+                <button onClick={() => handleGrade('good')}>😊 できた</button>
+                <button onClick={() => handleGrade('easy')}>🌟 かんたん</button>
+              </div>
             )}
           </div>
         </div>

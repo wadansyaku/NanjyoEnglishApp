@@ -28,6 +28,7 @@ export interface Env {
 type AuthContext = {
   userId: string;
   email?: string | null;
+  sessionId?: string | null;
 };
 
 type MagicLinkRequest = {
@@ -391,6 +392,19 @@ const maybeCleanupAuthTables = async (env: Env) => {
       now - authTokenTtlMs
     )
   );
+  await ensureAuthSessionsTable(env);
+  await dbRun(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `DELETE FROM auth_sessions
+         WHERE (revoked_at IS NOT NULL AND revoked_at < ?1)
+            OR (expires_at IS NOT NULL AND expires_at < ?2)`
+      ),
+      now - authTokenTtlMs,
+      now - authTokenTtlMs
+    )
+  );
 };
 
 const GLOBAL_SETTINGS_KEY = 'app_settings_default_v1';
@@ -518,18 +532,85 @@ const validateContextJson = (value: unknown) => {
   return { ok: true, json };
 };
 
+const ensureAuthSessionsTable = async (env: Env) => {
+  await dbRun(
+    dbPrepare(
+      env.DB,
+      `CREATE TABLE IF NOT EXISTS auth_sessions (
+         session_id TEXT PRIMARY KEY,
+         user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+         api_key_hash TEXT NOT NULL UNIQUE,
+         created_at INTEGER NOT NULL,
+         last_used_at INTEGER NOT NULL,
+         expires_at INTEGER,
+         revoked_at INTEGER
+       )`
+    )
+  );
+  await dbRun(dbPrepare(env.DB, 'CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id)'));
+  await dbRun(
+    dbPrepare(
+      env.DB,
+      'CREATE INDEX IF NOT EXISTS idx_auth_sessions_active ON auth_sessions(api_key_hash, revoked_at, expires_at)'
+    )
+  );
+};
+
 const requireAuth = async (request: Request, env: Env): Promise<AuthContext | null> => {
   const apiKey = parseBearer(request.headers.get('Authorization'));
   if (!apiKey) return null;
   const apiKeyHash = await hashSha256(apiKey);
-  const stmt = dbBind(
-    dbPrepare(env.DB, 'SELECT user_id, email FROM users WHERE api_key_hash = ?1'),
-    apiKeyHash
+  const now = Date.now();
+
+  try {
+    const sessionResult = await dbAll<{
+      session_id: string;
+      user_id: string;
+      email: string | null;
+    }>(
+      dbBind(
+        dbPrepare(
+          env.DB,
+          `SELECT s.session_id, s.user_id, u.email
+           FROM auth_sessions s
+           JOIN users u ON u.user_id = s.user_id
+           WHERE s.api_key_hash = ?1
+             AND s.revoked_at IS NULL
+             AND (s.expires_at IS NULL OR s.expires_at >= ?2)
+           LIMIT 1`
+        ),
+        apiKeyHash,
+        now
+      )
+    );
+    const session = sessionResult.results?.[0];
+    if (session?.user_id) {
+      if (Math.random() < 0.2) {
+        await dbRun(
+          dbBind(
+            dbPrepare(
+              env.DB,
+              `UPDATE auth_sessions
+               SET last_used_at = ?1
+               WHERE session_id = ?2`
+            ),
+            now,
+            session.session_id
+          )
+        );
+      }
+      return { userId: session.user_id, email: session.email, sessionId: session.session_id };
+    }
+  } catch (error) {
+    console.warn('auth session lookup fallback to legacy key:', (error as Error).message);
+  }
+
+  const legacyResult = await dbAll<{ user_id: string; email: string | null }>(
+    dbBind(dbPrepare(env.DB, 'SELECT user_id, email FROM users WHERE api_key_hash = ?1'), apiKeyHash)
   );
-  const result = await dbAll<{ user_id: string; email: string | null }>(stmt);
-  const row = result.results?.[0];
-  if (!row?.user_id) return null;
-  return { userId: row.user_id, email: row.email };
+  const legacy = legacyResult.results?.[0];
+  if (!legacy?.user_id) return null;
+  return { userId: legacy.user_id, email: legacy.email, sessionId: null };
 };
 
 const requireAdmin = (request: Request, env: Env) => {
@@ -1085,6 +1166,7 @@ const sendMagicLinkEmail = async (env: Env, to: string, magicLink: string): Prom
 const shouldExposeDevMagicLink = (env: Env) => parseBoolean(env.ALLOW_DEV_MAGIC_LINK, false);
 
 const MAGIC_LINK_EXPIRY_MS = 15 * 60 * 1000;
+const AUTH_SESSION_TTL_MS = 180 * 24 * 60 * 60 * 1000;
 
 type AuthTokenRow = {
   email: string;
@@ -1169,13 +1251,11 @@ const consumeMagicLinkToken = async (
   return { ok: false, reason: 'used' };
 };
 
-const createUserWithApiKey = async (env: Env, input: {
+const createUserRecord = async (env: Env, input: {
   email?: string | null;
   emailVerifiedAt?: number | null;
 }) => {
   const userId = crypto.randomUUID();
-  const apiKey = randomToken(32);
-  const apiKeyHash = await hashSha256(apiKey);
   const avatarSeed = randomToken(8);
   const createdAt = Date.now();
 
@@ -1185,14 +1265,13 @@ const createUserWithApiKey = async (env: Env, input: {
         env.DB,
         `INSERT INTO users
            (user_id, email, email_verified_at, created_at, avatar_seed, api_key_hash, xp_total, level)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, 1)`
+         VALUES (?1, ?2, ?3, ?4, ?5, NULL, 0, 1)`
       ),
       userId,
       input.email ?? null,
       input.emailVerifiedAt ?? null,
       createdAt,
-      avatarSeed,
-      apiKeyHash
+      avatarSeed
     )
   );
 
@@ -1209,20 +1288,32 @@ const createUserWithApiKey = async (env: Env, input: {
     )
   );
 
-  return { userId, apiKey, avatarSeed };
+  return { userId, avatarSeed };
 };
 
-const rotateApiKey = async (env: Env, userId: string) => {
+const createAuthSession = async (env: Env, userId: string) => {
+  await ensureAuthSessionsTable(env);
+
+  const now = Date.now();
+  const sessionId = crypto.randomUUID();
   const apiKey = randomToken(32);
   const apiKeyHash = await hashSha256(apiKey);
   await dbRun(
     dbBind(
-      dbPrepare(env.DB, 'UPDATE users SET api_key_hash = ?1 WHERE user_id = ?2'),
+      dbPrepare(
+        env.DB,
+        `INSERT INTO auth_sessions
+           (session_id, user_id, api_key_hash, created_at, last_used_at, expires_at, revoked_at)
+         VALUES (?1, ?2, ?3, ?4, ?4, ?5, NULL)`
+      ),
+      sessionId,
+      userId,
       apiKeyHash,
-      userId
+      now,
+      now + AUTH_SESSION_TTL_MS
     )
   );
-  return apiKey;
+  return { sessionId, apiKey };
 };
 
 const validateMeaningFields = (input: {
@@ -1402,11 +1493,17 @@ const ensureUserProfile = async (env: Env, userId: string) => {
 };
 
 const handleBootstrap = async (env: Env) => {
-  const session = await createUserWithApiKey(env, {
+  const user = await createUserRecord(env, {
     email: null,
     emailVerifiedAt: null
   });
-  return jsonResponse({ ok: true, ...session });
+  const session = await createAuthSession(env, user.userId);
+  return jsonResponse({
+    ok: true,
+    userId: user.userId,
+    apiKey: session.apiKey,
+    avatarSeed: user.avatarSeed
+  });
 };
 
 const handleRequestMagicLink = async (request: Request, env: Env) => {
@@ -1591,12 +1688,14 @@ const handleVerifyMagicLink = async (request: Request, env: Env) => {
     );
 
     const avatarSeed = userResult.results?.[0]?.avatar_seed ?? randomToken(8);
-    const apiKey = await rotateApiKey(env, tokenRow.target_user_id);
+    const session = await createAuthSession(env, tokenRow.target_user_id);
+
+    await maybeCleanupAuthTables(env);
 
     return jsonResponse({
       ok: true,
       userId: tokenRow.target_user_id,
-      apiKey,
+      apiKey: session.apiKey,
       avatarSeed,
       email: tokenRow.email,
       isNewUser: false,
@@ -1637,14 +1736,16 @@ const handleVerifyMagicLink = async (request: Request, env: Env) => {
         userId
       )
     );
-    apiKey = await rotateApiKey(env, userId);
+    const session = await createAuthSession(env, userId);
+    apiKey = session.apiKey;
   } else {
-    const session = await createUserWithApiKey(env, {
+    const user = await createUserRecord(env, {
       email: tokenRow.email,
       emailVerifiedAt: now
     });
-    userId = session.userId;
-    avatarSeed = session.avatarSeed;
+    userId = user.userId;
+    avatarSeed = user.avatarSeed;
+    const session = await createAuthSession(env, userId);
     apiKey = session.apiKey;
     isNewUser = true;
   }
@@ -1720,6 +1821,36 @@ const handleAuthMe = async (env: Env, auth: AuthContext) => {
       streakDays: progress.streak_days
     }
   });
+};
+
+const handleAuthLogout = async (env: Env, auth: AuthContext) => {
+  const now = Date.now();
+
+  if (auth.sessionId) {
+    await dbRun(
+      dbBind(
+        dbPrepare(
+          env.DB,
+          `UPDATE auth_sessions
+           SET revoked_at = COALESCE(revoked_at, ?1)
+           WHERE session_id = ?2
+             AND user_id = ?3`
+        ),
+        now,
+        auth.sessionId,
+        auth.userId
+      )
+    );
+  } else {
+    await dbRun(
+      dbBind(
+        dbPrepare(env.DB, 'UPDATE users SET api_key_hash = NULL WHERE user_id = ?1'),
+        auth.userId
+      )
+    );
+  }
+
+  return jsonResponse({ ok: true });
 };
 
 const handleLinkAccount = async (request: Request, env: Env, auth: AuthContext) => {
@@ -4422,6 +4553,13 @@ export default {
       const auth = await requireAuth(request, env);
       if (!auth) return unauthorized();
       return handleAuthMe(env, auth);
+    }
+
+    if (url.pathname === '/api/v1/auth/logout') {
+      if (request.method !== 'POST') return methodNotAllowed();
+      const auth = await requireAuth(request, env);
+      if (!auth) return unauthorized();
+      return handleAuthLogout(env, auth);
     }
 
     if (url.pathname === '/api/v1/auth/link-account') {

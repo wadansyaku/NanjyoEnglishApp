@@ -2,7 +2,13 @@ import { useMemo, useState } from 'react';
 import { Modal } from '../components/ui';
 import { Link } from '../lib/router';
 import { type AppSettings } from '../lib/settings';
-import { AuthApiError, getAuth, linkAccount, logout, type AuthSession } from '../lib/auth';
+import {
+  AuthApiError,
+  getAuth,
+  linkAccount,
+  revokeCurrentSession,
+  type AuthSession
+} from '../lib/auth';
 import { buildSyncSnapshot } from '../db';
 import { isSyncEnabled, syncPush } from '../lib/sync';
 
@@ -59,9 +65,10 @@ export default function SettingsPage({ settings, onChangeSettings }: SettingsPag
     closeConsent();
   };
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await revokeCurrentSession();
     setAuth(null);
+    setLinkStatus('ログアウトしました。');
   };
 
   const handleLinkEmail = async () => {
@@ -158,7 +165,7 @@ export default function SettingsPage({ settings, onChangeSettings }: SettingsPag
               <button type="button" onClick={handleSyncNow} disabled={syncing}>
                 {syncing ? '同期中…' : '☁️ 学習データを同期'}
               </button>
-              <button className="secondary" type="button" onClick={handleLogout}>
+              <button className="secondary" type="button" onClick={() => void handleLogout()}>
                 ログアウト
               </button>
             </div>
@@ -174,6 +181,19 @@ export default function SettingsPage({ settings, onChangeSettings }: SettingsPag
             </Link>
           </>
         )}
+      </div>
+
+      <div className="card">
+        <h2>🔊 学習サポート</h2>
+        <p className="notice">復習カードで英単語が表示されたら自動で発音します。</p>
+        <label className="candidate-toggle">
+          <input
+            type="checkbox"
+            checked={settings.autoPronounce}
+            onChange={(event) => updateSettings({ autoPronounce: event.target.checked })}
+          />
+          <span>英単語を自動で読み上げる</span>
+        </label>
       </div>
 
       {/* クラウド機能 - シンプルなトグルのみ */}

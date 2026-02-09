@@ -278,6 +278,28 @@ export const logout = () => {
   clearPendingEmail();
 };
 
+export const revokeCurrentSession = async () => {
+  const auth = loadAuth();
+  if (!auth) {
+    clearAuth();
+    clearPendingEmail();
+    return;
+  }
+  try {
+    await fetch('/api/v1/auth/logout', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${auth.apiKey}`
+      }
+    });
+  } catch {
+    // Best-effort revoke; clear local session regardless.
+  } finally {
+    clearAuth();
+    clearPendingEmail();
+  }
+};
+
 /**
  * 認証済みかどうか
  */

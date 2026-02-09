@@ -12,6 +12,8 @@ import {
 } from '../db';
 import { getCurriculumProgress, setCurriculumProgress } from '../lib/curriculumProgress';
 import { fetchWordbankCurriculum, fetchWordbankStepWords, type WordbankCurriculumStep } from '../lib/wordbank';
+import type { AppSettings } from '../lib/settings';
+import { speak, stopSpeaking } from '../lib/tts';
 
 const gradeLabels = [
   { key: 'again', label: 'もう一回', xp: 0, emoji: '🔄' },
@@ -22,6 +24,7 @@ const gradeLabels = [
 
 type ReviewPageProps = {
   deckId: string;
+  settings: AppSettings;
   showToast?: (message: string, type?: 'info' | 'success' | 'error') => void;
 };
 
@@ -34,7 +37,7 @@ const parseStepIdFromSource = (sourceId?: string) => {
 const findStepById = (stepId: string, steps: WordbankCurriculumStep[]) =>
   steps.find((step) => step.stepId === stepId) ?? null;
 
-export default function ReviewPage({ deckId, showToast }: ReviewPageProps) {
+export default function ReviewPage({ deckId, settings, showToast }: ReviewPageProps) {
   const [deckInfo, setDeckInfo] = useState<Deck | null>(null);
   const [dueCard, setDueCard] = useState<DueCard | null>(null);
   const [dueCount, setDueCount] = useState(0);
@@ -89,8 +92,19 @@ export default function ReviewPage({ deckId, showToast }: ReviewPageProps) {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    if (!settings.autoPronounce || !dueCard || showAnswer) return;
+    if (!speak(dueCard.lexeme.headword)) return;
+    return () => {
+      stopSpeaking();
+    };
+  }, [settings.autoPronounce, dueCard, showAnswer]);
+
+  useEffect(() => () => stopSpeaking(), []);
+
   const handleReview = async (grade: 'again' | 'hard' | 'good' | 'easy') => {
     if (!dueCard || !deckIdValue) return;
+    stopSpeaking();
     await reviewCard(deckIdValue, dueCard.srs.cardId, grade);
     await incrementEvent('review_done');
     setShowAnswer(false);
@@ -218,7 +232,7 @@ export default function ReviewPage({ deckId, showToast }: ReviewPageProps) {
         )}
         {deckInfo?.title && dueCard && (
           <div>
-            <p className="notice">先に意味を思い出してから「意味を見る」を押そう。</p>
+            <p className="notice">カードをタップして英語と意味をめくろう。</p>
             <p className="badge">今日の残り: {dueCount} 枚</p>
 
             {curriculumMeta && (
@@ -244,59 +258,36 @@ export default function ReviewPage({ deckId, showToast }: ReviewPageProps) {
               </div>
             )}
 
-            <div style={{
-              textAlign: 'center',
-              padding: '24px 16px',
-              background: 'linear-gradient(135deg, #FFF8FA, #FFF)',
-              borderRadius: 16,
-              border: '2px solid var(--primary-light)',
-              marginBottom: 16
-            }}>
-              <div style={{
-                fontSize: '0.85rem',
-                color: 'var(--text-muted)',
-                marginBottom: 8
-              }}>
-                この単語の意味は？
-              </div>
-              <div style={{
-                fontSize: '1.8rem',
-                fontWeight: 700,
-                color: 'var(--primary-dark)'
-              }}>
-                {dueCard.lexeme.headword}
-              </div>
-            </div>
+            <button
+              type="button"
+              className={`review-flip-card ${showAnswer ? 'is-back' : ''}`}
+              onClick={() => setShowAnswer((prev) => !prev)}
+              aria-label={showAnswer ? '英単語面に戻す' : '意味面へめくる'}
+            >
+              <span className="review-flip-face review-flip-front">
+                <small className="review-flip-hint">ENGLISH</small>
+                <strong>{dueCard.lexeme.headword}</strong>
+                <small>タップで意味へ</small>
+              </span>
+              <span className="review-flip-face review-flip-back">
+                <small className="review-flip-hint">にほんご</small>
+                <strong>{dueCard.lexeme.meaningJa}</strong>
+                <small>タップで英語へ</small>
+              </span>
+            </button>
 
-            {showAnswer ? (
-              <div style={{
-                textAlign: 'center',
-                padding: '20px 16px',
-                background: 'linear-gradient(135deg, var(--success-light), #FFF)',
-                borderRadius: 16,
-                border: '2px solid var(--success)',
-                marginBottom: 16
-              }}>
-                <div style={{
-                  fontSize: '0.85rem',
-                  color: 'var(--text-muted)',
-                  marginBottom: 8
-                }}>
-                  意味
-                </div>
-                <div style={{
-                  fontSize: '1.4rem',
-                  fontWeight: 700,
-                  color: 'var(--text-primary)'
-                }}>
-                  {dueCard.lexeme.meaningJa}
-                </div>
-              </div>
-            ) : (
-              <button className="secondary" onClick={() => setShowAnswer(true)}>
-                👀 意味を見る
+            <div className="scan-inline-actions" style={{ marginTop: 10 }}>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => {
+                  stopSpeaking();
+                  speak(dueCard.lexeme.headword);
+                }}
+              >
+                🔊 発音
               </button>
-            )}
+            </div>
           </div>
         )}
         {status && (
