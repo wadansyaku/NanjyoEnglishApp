@@ -1,6 +1,8 @@
-# Nanjyo English App
+# AIYuMe English
 
 教科書本文の一部を撮影 → OCR → 未知語抽出 → ミニ単語帳 → SRS を1セッションで回すPWAです。
+
+AIYuMeグループの学習部門ブランド名は **AIYuMe Learning**、本アプリ名は **AIYuMe English** です。
 
 ## 重要ポリシー（必読）
 
@@ -125,6 +127,18 @@ npx wrangler secret put WORKERS_AI_API_TOKEN
 - `CF_AIG_ACCOUNT_ID` / `CF_AIG_GATEWAY_ID` / `CF_AIG_BASE_URL`（AI Gateway経由用）
 - `WORKERS_AI_ACCOUNT_ID`
 - `WORKERS_AI_MODEL`
+
+## ドメイン / ログイン一元化（ai-yu-me.com）
+
+- Workerルーティング: `wrangler.toml` で `ai-yu-me.com` / `www.ai-yu-me.com` に接続
+- マジックリンクURL: `APP_URL=https://ai-yu-me.com` を使用
+- 送信元メールは `RESEND_FROM_EMAIL` を `login@ai-yu-me.com` などに設定
+
+```bash
+npx wrangler secret put RESEND_FROM_EMAIL
+```
+
+Resend側で `ai-yu-me.com` ドメイン認証（SPF/DKIM）を済ませてから運用してください。
 
 ## アーキテクチャ
 

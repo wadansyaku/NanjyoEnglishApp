@@ -132,8 +132,11 @@ export default function ReviewHomePage({ settings }: ReviewHomePageProps) {
     if (quickState !== 'reviewing' || !settings.autoPronounce || showAnswer) return;
     const card = quickCards[currentIndex];
     if (!card) return;
-    if (!speak(card.lexeme.headword)) return;
+    const timer = window.setTimeout(() => {
+      speak(card.lexeme.headword);
+    }, 200);
     return () => {
+      window.clearTimeout(timer);
       stopSpeaking();
     };
   }, [quickState, settings.autoPronounce, quickCards, currentIndex, showAnswer]);

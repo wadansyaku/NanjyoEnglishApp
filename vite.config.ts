@@ -9,8 +9,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'icon.svg'],
       manifest: {
-        name: 'Nanjyo English App',
-        short_name: 'NanjyoEnglish',
+        name: 'AIYuMe English',
+        short_name: 'AIYuMe',
         start_url: '/',
         display: 'standalone',
         background_color: '#0f172a',

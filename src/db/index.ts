@@ -269,6 +269,31 @@ export const addLexemeToDeck = async (
   });
 };
 
+export const removeLexemeFromDeck = async (deckId: string, headwordNorm: string) => {
+  const normalized = normalizeHeadword(headwordNorm);
+  if (!normalized) return;
+
+  await db.transaction('rw', db.decks, db.srs, db.lexemeCache, async () => {
+    const deck = await db.decks.get(deckId);
+    if (!deck) return;
+    if (!deck.headwordNorms.includes(normalized)) return;
+
+    const nextHeadwordNorms = deck.headwordNorms.filter((item) => item !== normalized);
+    await db.decks.put({
+      ...deck,
+      headwordNorms: nextHeadwordNorms
+    });
+    await db.srs.delete(`${deckId}:${normalized}`);
+
+    const stillUsedElsewhere = await db.decks
+      .filter((item) => item.deckId !== deckId && item.headwordNorms.includes(normalized))
+      .first();
+    if (!stillUsedElsewhere) {
+      await db.lexemeCache.delete(normalized);
+    }
+  });
+};
+
 export const getDueCard = async (deckId: string): Promise<DueCard | null> => {
   const now = Date.now();
   const dueCandidates = await db.srs

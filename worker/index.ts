@@ -1117,12 +1117,12 @@ const sendMagicLinkEmail = async (env: Env, to: string, magicLink: string): Prom
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        from: `えいたんメイト <${fromEmail}>`,
+        from: `AIYuMe English <${fromEmail}>`,
         to: [to],
-        subject: '【えいたんメイト】ログインリンク',
+        subject: '【AIYuMe English】ログインリンク',
         html: `
           <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <h1 style="color: #FF7EB3; font-size: 24px;">えいたんメイト</h1>
+            <h1 style="color: #FF7EB3; font-size: 24px;">AIYuMe English</h1>
             <p>以下のボタンをクリックしてログインしてください。</p>
             <p style="margin: 30px 0;">
               <a href="${magicLink}" 
@@ -3184,9 +3184,9 @@ const handleWordbankCurriculum = async (env: Env) => {
     buildStep({
       stepId: 'accelerated_jhs2_bridge',
       title: '中2（速習）',
-      description: '中2が短い分を中3前半で補い、学習量を平準化します。',
+      description: '中2は中3導入と一緒に進めます。',
       deckIds: ['default_g8_jhs2', sliceUntil('default_g9_jhs3', defaultG9SplitA)],
-      note: '中2単独の語数が少ないため、中3導入を同時に進めます。',
+      note: '中2の語数が少ないためです。',
       recommendedChunk: 10
     }),
     buildStep({

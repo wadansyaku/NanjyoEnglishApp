@@ -146,7 +146,7 @@
 
 ## Global Header
 
-- App title: `えいたんメイト`
+- App title: `AIYuMe English`
 - Subtitle:
   - `写真から単語を見つけて、自分だけの単語ノートで復習しよう。`
 - Nav labels:

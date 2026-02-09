@@ -1,6 +1,6 @@
 /* ========================================
-   えいたんメイト - New Kawaii Color Palette
-   Target: 南山中学女子部1年生（12-13歳女子）
+   AIYuMe English - New Kawaii Color Palette
+   Target: 中高生（スマホ中心）
    ======================================== */
 
 @import url('https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700&display=swap');
@@ -1261,9 +1261,10 @@ hr {
 }
 
 /* ========================================
-   Media Queries
+   Media Queries - Responsive Optimizations
    ======================================== */
 
+/* Tablet and up (768px+) */
 @media (min-width: 768px) {
   main {
     padding: 32px 24px 80px;
@@ -1277,23 +1278,115 @@ hr {
     padding: 24px;
   }
 
+  /* Review page: inline grade buttons on tablet+ */
   .review-grade-dock {
     position: static;
     left: auto;
     right: auto;
     bottom: auto;
     padding: 0;
-    margin-top: 12px;
+    margin-top: 16px;
     border-top: none;
     background: transparent;
     backdrop-filter: none;
   }
 
+  .review-grade-dock .grade-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+  }
+
   .review-page-spacer {
     display: none;
   }
+
+  /* Grade button size on tablet */
+  .grade-button {
+    min-height: 72px;
+    padding: 16px 12px;
+  }
+
+  /* Flip card larger on tablet */
+  .review-flip-card {
+    min-height: 220px;
+  }
+
+  .review-flip-face strong {
+    font-size: 1.9rem;
+  }
 }
 
+/* Desktop (1024px+) - Normal flow for bottom nav */
+@media (min-width: 1024px) {
+  main {
+    padding: 32px 32px 40px;
+    max-width: 1080px;
+  }
+
+  /* Convert fixed bottom nav to normal flow footer */
+  .bottom-nav {
+    position: static;
+    max-width: 980px;
+    margin: 32px auto 0;
+    border-radius: 16px;
+    border: 1px solid var(--border-light);
+    background: rgba(255, 255, 255, 0.9);
+  }
+
+  /* Larger tap targets on desktop */
+  .bottom-nav-item {
+    min-height: 60px;
+    padding: 12px;
+  }
+
+  /* Review flip card optimized for desktop */
+  .review-flip-card {
+    max-width: 520px;
+    min-height: 240px;
+    margin: 0 auto 8px;
+  }
+
+  .review-flip-face strong {
+    font-size: 2.1rem;
+  }
+
+  /* Grade buttons centered on desktop */
+  .review-grade-dock .grade-grid {
+    max-width: 640px;
+    margin: 0 auto;
+  }
+
+  .grade-button {
+    min-height: 80px;
+    padding: 18px 14px;
+    font-size: 1rem;
+  }
+
+  /* Modal optimization */
+  .modal-card {
+    max-height: 80vh;
+  }
+
+  /* Character page layout */
+  .section-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Large desktop (1280px+) */
+@media (min-width: 1280px) {
+  main {
+    max-width: 1200px;
+    padding: 40px 48px 48px;
+  }
+
+  .bottom-nav {
+    max-width: 1100px;
+  }
+}
+
+/* Mobile only (max 767px) */
 @media (max-width: 767px) {
   .section-grid {
     grid-template-columns: 1fr;
@@ -1315,11 +1408,17 @@ hr {
   }
 
   .scan-stepper {
-    grid-template-columns: repeat(5, minmax(64px, 1fr));
+    grid-template-columns: repeat(5, minmax(56px, 1fr));
+    gap: 3px;
+  }
+
+  .scan-step-pill {
+    padding: 3px 1px;
+    font-size: 0.7rem;
   }
 
   .scan-step-pill small {
-    font-size: 0.66rem;
+    font-size: 0.62rem;
   }
 
   .scan-option-grid {
@@ -1334,8 +1433,53 @@ hr {
     grid-template-columns: 1fr;
   }
 
+  /* Fixed grade dock on mobile with safe spacing */
   .review-grade-dock {
-    bottom: calc(env(safe-area-inset-bottom) + 66px);
+    bottom: calc(env(safe-area-inset-bottom) + 68px);
+    padding: 8px 10px;
+  }
+
+  .review-grade-dock .grade-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+  }
+
+  .grade-button {
+    min-height: 52px;
+    padding: 10px 6px;
+    font-size: 0.85rem;
+  }
+
+  .grade-button span {
+    font-size: 0.7rem;
+  }
+
+  /* Spacer for mobile fixed dock */
+  .review-page-spacer {
+    height: 170px;
+  }
+
+  /* Flip card on mobile */
+  .review-flip-card {
+    min-height: 160px;
+  }
+
+  .review-flip-face {
+    padding: 14px 12px;
+  }
+
+  .review-flip-face strong {
+    font-size: 1.4rem;
+  }
+
+  .review-flip-back strong {
+    font-size: 1.15rem;
+  }
+
+  /* Pronunciation button spacing from grade buttons */
+  .scan-inline-actions {
+    margin-bottom: 20px;
   }
 
   .modal-backdrop {
@@ -1351,10 +1495,71 @@ hr {
 
   .app-header {
     flex-direction: column;
+    gap: 8px;
   }
 
   .app-header-actions {
     width: 100%;
     justify-content: flex-start;
+  }
+}
+
+/* Small mobile (max 360px) */
+@media (max-width: 360px) {
+  main {
+    padding: 16px 10px 90px;
+  }
+
+  .card {
+    padding: 12px;
+  }
+
+  .scan-stepper {
+    grid-template-columns: repeat(5, 1fr);
+    gap: 2px;
+  }
+
+  .scan-step-pill {
+    font-size: 0.65rem;
+    min-height: 40px;
+  }
+
+  .scan-step-pill small {
+    display: none;
+  }
+
+  .review-flip-face strong {
+    font-size: 1.25rem;
+  }
+
+  .grade-button {
+    min-height: 48px;
+    padding: 8px 4px;
+    font-size: 0.78rem;
+  }
+
+  .grade-button span:last-child {
+    font-size: 0.65rem;
+  }
+}
+
+/* Landscape mobile */
+@media (max-height: 500px) and (orientation: landscape) {
+  .review-flip-card {
+    min-height: 120px;
+  }
+
+  .review-grade-dock {
+    bottom: calc(env(safe-area-inset-bottom) + 56px);
+    padding: 6px 8px;
+  }
+
+  .grade-button {
+    min-height: 44px;
+    padding: 8px 6px;
+  }
+
+  .review-page-spacer {
+    height: 130px;
   }
 }

@@ -7,7 +7,7 @@
 
 ## App Snapshot (2026-02-07)
 
-- Product name: えいたんメイト
+- Product name: AIYuMe English
 - Header subtitle: 写真から単語を見つけて、自分だけの単語ノートで復習しよう。
 - Main routes:
   - `/scan`: 写真読み取り、単語抽出、単語ノート作成

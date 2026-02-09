@@ -3,11 +3,14 @@ import { Link } from '../lib/router';
 import {
   createOrUpdateSystemDeck,
   getDeck,
+  getDeckWords,
   getDueCard,
   getDueCount,
   incrementEvent,
+  removeLexemeFromDeck,
   reviewCard,
   type Deck,
+  type DeckWord,
   type DueCard
 } from '../db';
 import { getCurriculumProgress, setCurriculumProgress } from '../lib/curriculumProgress';
@@ -39,10 +42,13 @@ const findStepById = (stepId: string, steps: WordbankCurriculumStep[]) =>
 
 export default function ReviewPage({ deckId, settings, showToast }: ReviewPageProps) {
   const [deckInfo, setDeckInfo] = useState<Deck | null>(null);
+  const [deckWords, setDeckWords] = useState<DeckWord[]>([]);
   const [dueCard, setDueCard] = useState<DueCard | null>(null);
   const [dueCount, setDueCount] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
   const [status, setStatus] = useState('');
+  const [showWordEditor, setShowWordEditor] = useState(false);
+  const [removingWordNorm, setRemovingWordNorm] = useState('');
 
   const [addingChunk, setAddingChunk] = useState(false);
   const [chunkSize, setChunkSize] = useState<5 | 10 | 20>(10);
@@ -59,6 +65,7 @@ export default function ReviewPage({ deckId, settings, showToast }: ReviewPagePr
     const deck = await getDeck(deckIdValue);
     if (!deck) {
       setDeckInfo(null);
+      setDeckWords([]);
       setDueCard(null);
       setDueCount(0);
       setCurriculumMeta(null);
@@ -69,6 +76,8 @@ export default function ReviewPage({ deckId, settings, showToast }: ReviewPagePr
     setDueCard(card);
     const count = await getDueCount(deckIdValue);
     setDueCount(count);
+    const words = await getDeckWords(deckIdValue);
+    setDeckWords(words);
 
     const stepId = parseStepIdFromSource(deck.sourceId);
     if (!stepId) {
@@ -93,9 +102,17 @@ export default function ReviewPage({ deckId, settings, showToast }: ReviewPagePr
   }, [load]);
 
   useEffect(() => {
+    setShowWordEditor(false);
+    setRemovingWordNorm('');
+  }, [deckIdValue]);
+
+  useEffect(() => {
     if (!settings.autoPronounce || !dueCard || showAnswer) return;
-    if (!speak(dueCard.lexeme.headword)) return;
+    const timer = window.setTimeout(() => {
+      speak(dueCard.lexeme.headword);
+    }, 200);
     return () => {
+      window.clearTimeout(timer);
       stopSpeaking();
     };
   }, [settings.autoPronounce, dueCard, showAnswer]);
@@ -181,6 +198,26 @@ export default function ReviewPage({ deckId, settings, showToast }: ReviewPagePr
   }, [deckInfo?.title]);
 
   const canAddChunk = Boolean(curriculumMeta && curriculumMeta.loaded < curriculumMeta.total);
+  const canManageWords = Boolean(deckInfo && (!deckInfo.origin || deckInfo.origin === 'custom'));
+
+  const handleRemoveWord = async (word: DeckWord) => {
+    if (!deckInfo) return;
+    if (!confirm(`「${word.headword}」をノートから削除しますか？`)) return;
+
+    setRemovingWordNorm(word.headwordNorm);
+    try {
+      await removeLexemeFromDeck(deckInfo.deckId, word.headwordNorm);
+      setStatus(`「${word.headword}」を削除しました。`);
+      showToast?.(`「${word.headword}」を削除しました。`, 'success');
+      await load();
+    } catch (error) {
+      const message = (error as Error).message || '単語の削除に失敗しました。';
+      setStatus(message);
+      showToast?.(message, 'error');
+    } finally {
+      setRemovingWordNorm('');
+    }
+  };
 
   return (
     <section className="section-grid">
@@ -296,6 +333,41 @@ export default function ReviewPage({ deckId, settings, showToast }: ReviewPagePr
           }}>
             {status}
           </p>
+        )}
+        {deckInfo?.title && canManageWords && (
+          <div className="cut-candidate-box" style={{ marginTop: 14 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+              <strong>単語ノートを編集</strong>
+              <button
+                type="button"
+                className="secondary candidate-cut-button"
+                onClick={() => setShowWordEditor((prev) => !prev)}
+              >
+                {showWordEditor ? '閉じる' : '単語を削除'}
+              </button>
+            </div>
+            {showWordEditor && (
+              <div className="word-grid" style={{ marginTop: 10 }}>
+                {deckWords.length === 0 && <p className="counter">このノートに単語はありません。</p>}
+                {deckWords.map((word) => (
+                  <div key={word.headwordNorm} className="word-item">
+                    <div>
+                      <strong>{word.headword}</strong>
+                      <small>{word.meaningJa}</small>
+                    </div>
+                    <button
+                      type="button"
+                      className="secondary candidate-cut-button"
+                      onClick={() => void handleRemoveWord(word)}
+                      disabled={removingWordNorm === word.headwordNorm}
+                    >
+                      {removingWordNorm === word.headwordNorm ? '削除中…' : '削除'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         )}
       </div>
 

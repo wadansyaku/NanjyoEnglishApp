@@ -215,7 +215,7 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="app-header app-header-compact">
-        <h1>えいたんメイト</h1>
+        <h1>AIYuMe English</h1>
         <div className="app-header-actions">
           <span className="badge badge-sm">{xpLabel}</span>
           <Link className="pill pill-sm" to="/settings">⚙️</Link>

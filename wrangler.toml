@@ -1,6 +1,10 @@
 name = "nanjyoenglishapp"
 main = "worker/index.ts"
 compatibility_date = "2026-02-01"
+routes = [
+  { pattern = "ai-yu-me.com/*", zone_name = "ai-yu-me.com" },
+  { pattern = "www.ai-yu-me.com/*", zone_name = "ai-yu-me.com" }
+]
 
 assets = { directory = "./dist", binding = "ASSETS", not_found_handling = "single-page-application", run_worker_first = ["/api/*"] }
 
@@ -8,6 +12,7 @@ assets = { directory = "./dist", binding = "ASSETS", not_found_handling = "singl
 AI_PROVIDER = "openai"
 CLOUD_OCR_DAILY_LIMIT = "20"
 AI_MEANING_DAILY_LIMIT = "20"
+APP_URL = "https://ai-yu-me.com"
 
 [[d1_databases]]
 binding = "DB"
