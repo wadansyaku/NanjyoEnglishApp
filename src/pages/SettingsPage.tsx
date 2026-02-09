@@ -3,6 +3,8 @@ import { Modal } from '../components/ui';
 import { Link } from '../lib/router';
 import { type AppSettings } from '../lib/settings';
 import { getAuth, logout, type AuthSession } from '../lib/auth';
+import { buildSyncSnapshot } from '../db';
+import { isSyncEnabled, syncPush } from '../lib/sync';
 
 type SettingsPageProps = {
   settings: AppSettings;
@@ -16,6 +18,8 @@ export default function SettingsPage({ settings, onChangeSettings }: SettingsPag
   const [agreedDataTransfer, setAgreedDataTransfer] = useState(false);
   const [agreedSafetyRule, setAgreedSafetyRule] = useState(false);
   const [auth, setAuth] = useState<AuthSession | null>(() => getAuth());
+  const [syncStatus, setSyncStatus] = useState('');
+  const [syncing, setSyncing] = useState(false);
 
   const updateSettings = (patch: Partial<AppSettings>) => {
     onChangeSettings({
@@ -56,6 +60,27 @@ export default function SettingsPage({ settings, onChangeSettings }: SettingsPag
     setAuth(null);
   };
 
+  const handleSyncNow = async () => {
+    if (!isSyncEnabled()) {
+      setSyncStatus('メール認証済みでログインしてから同期してください。');
+      return;
+    }
+    setSyncing(true);
+    setSyncStatus('');
+    try {
+      const payload = await buildSyncSnapshot();
+      await syncPush({
+        decks: payload.decks,
+        progress: payload.progress
+      });
+      setSyncStatus(`同期完了: ${payload.decks.length}ノート`);
+    } catch (error) {
+      setSyncStatus((error as Error).message || '同期に失敗しました。');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const consentTitle = useMemo(() => {
     if (consentTarget === 'cloud') return 'クラウド読み取りの同意';
     if (consentTarget === 'ai') return 'AI意味提案の同意';
@@ -82,10 +107,14 @@ export default function SettingsPage({ settings, onChangeSettings }: SettingsPag
             <p className="notice">✅ ログイン済み</p>
             <p>メール: {auth.email}</p>
             <div className="scan-inline-actions" style={{ marginTop: 12 }}>
+              <button type="button" onClick={handleSyncNow} disabled={syncing}>
+                {syncing ? '同期中…' : '☁️ 学習データを同期'}
+              </button>
               <button className="secondary" type="button" onClick={handleLogout}>
                 ログアウト
               </button>
             </div>
+            {syncStatus && <p className="counter">{syncStatus}</p>}
           </>
         ) : (
           <>

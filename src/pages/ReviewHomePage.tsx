@@ -1,45 +1,71 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, usePath } from '../lib/router';
 import {
   createOrUpdateSystemDeck,
-  listDeckDueSummaries,
-  getQuickReviewCount,
   getQuickReviewCards,
+  getQuickReviewCount,
+  listDeckDueSummaries,
   reviewCard,
   type DeckDueSummary,
   type DueCard
 } from '../db';
+import {
+  getCurriculumProgress,
+  loadCurriculumProgressMap,
+  setCurriculumProgress
+} from '../lib/curriculumProgress';
+import {
+  fetchWordbankCurriculum,
+  fetchWordbankStepWords,
+  type WordbankCurriculumResponse,
+  type WordbankCurriculumStep,
+  type WordbankCurriculumTrack
+} from '../lib/wordbank';
 
 type QuickReviewState = 'idle' | 'reviewing' | 'complete';
 
+type WordbankDeck = {
+  deckId: string;
+  title: string;
+  description: string;
+  wordCount: number;
+};
+
+const resolveChunkSize = (step: WordbankCurriculumStep) => {
+  if (step.recommendedChunk === 5 || step.recommendedChunk === 20) return step.recommendedChunk;
+  return 10;
+};
+
 export default function ReviewHomePage() {
   const { navigate } = usePath();
+
   const [summaries, setSummaries] = useState<DeckDueSummary[]>([]);
   const [quickCount, setQuickCount] = useState(0);
-  const [wordbankDecks, setWordbankDecks] = useState<Array<{
-    deckId: string;
-    title: string;
-    description: string;
-    wordCount: number;
-  }>>([]);
+
+  const [wordbankDecks, setWordbankDecks] = useState<WordbankDeck[]>([]);
   const [wordbankLoading, setWordbankLoading] = useState(false);
   const [wordbankImportingId, setWordbankImportingId] = useState('');
   const [wordbankStatus, setWordbankStatus] = useState('');
+  const [showRawDecks, setShowRawDecks] = useState(false);
 
-  // Quick Review状態
+  const [tracks, setTracks] = useState<WordbankCurriculumTrack[]>([]);
+  const [allRange, setAllRange] = useState<WordbankCurriculumResponse['allRange']>(null);
+  const [selectedTrackId, setSelectedTrackId] = useState('accelerated');
+  const [stepProgress, setStepProgress] = useState(() => loadCurriculumProgressMap());
+
   const [quickState, setQuickState] = useState<QuickReviewState>('idle');
   const [quickCards, setQuickCards] = useState<DueCard[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     const rows = await listDeckDueSummaries();
     const qCount = await getQuickReviewCount();
     setSummaries(rows);
     setQuickCount(qCount);
-  };
+  }, []);
 
-  const loadWordbankDecks = async () => {
+  const loadWordbankDecks = useCallback(async () => {
     setWordbankLoading(true);
     try {
       const response = await fetch('/api/v1/wordbank/decks');
@@ -69,12 +95,30 @@ export default function ReviewHomePage() {
     } finally {
       setWordbankLoading(false);
     }
-  };
+  }, []);
+
+  const loadCurriculum = useCallback(async () => {
+    try {
+      const data = await fetchWordbankCurriculum();
+      const nextTracks = data.tracks ?? [];
+      setTracks(nextTracks);
+      setAllRange(data.allRange ?? null);
+      setSelectedTrackId((prev) => {
+        if (nextTracks.length === 0) return prev;
+        if (nextTracks.some((track) => track.trackId === prev)) return prev;
+        return nextTracks[0].trackId;
+      });
+    } catch {
+      setTracks([]);
+      setAllRange(null);
+    }
+  }, []);
 
   useEffect(() => {
     void loadData();
     void loadWordbankDecks();
-  }, []);
+    void loadCurriculum();
+  }, [loadCurriculum, loadData, loadWordbankDecks]);
 
   const handleStartWordbankDeck = async (deckId: string) => {
     if (!deckId) return;
@@ -110,6 +154,49 @@ export default function ReviewHomePage() {
     }
   };
 
+  const handleStartCurriculumStep = async (step: WordbankCurriculumStep) => {
+    setWordbankImportingId(step.stepId);
+    setWordbankStatus('');
+    try {
+      const words = await fetchWordbankStepWords(step);
+      if (words.length === 0) {
+        throw new Error('このステップに単語がありません。');
+      }
+
+      const progress = getCurriculumProgress(step.stepId);
+      const chunkSize = progress?.chunkSize ?? resolveChunkSize(step);
+      const targetCount = Math.max(
+        1,
+        Math.min(words.length, progress?.offset && progress.offset > 0 ? progress.offset : chunkSize)
+      );
+      const selected = words.slice(0, targetCount);
+
+      const localDeckId = await createOrUpdateSystemDeck({
+        sourceId: `curriculum:${step.stepId}`,
+        title: `${step.title} (${targetCount}/${words.length})`,
+        origin: 'core',
+        words: selected
+      });
+
+      setCurriculumProgress(step.stepId, {
+        offset: targetCount,
+        total: words.length,
+        chunkSize
+      });
+      setStepProgress(loadCurriculumProgressMap());
+
+      setWordbankStatus(
+        `「${step.title}」を開始しました。復習画面で 5/10/20語ずつ続きを追加できます。`
+      );
+      await loadData();
+      navigate(`/review/${localDeckId}`);
+    } catch (error) {
+      setWordbankStatus((error as Error).message || '取り込みに失敗しました。');
+    } finally {
+      setWordbankImportingId('');
+    }
+  };
+
   const totalDue = useMemo(
     () => summaries.reduce((sum, item) => sum + item.dueCount, 0),
     [summaries]
@@ -120,11 +207,14 @@ export default function ReviewHomePage() {
     [summaries]
   );
 
-  // 「今日の3分」開始
+  const selectedTrack = useMemo(
+    () => tracks.find((track) => track.trackId === selectedTrackId) ?? tracks[0] ?? null,
+    [tracks, selectedTrackId]
+  );
+
   const handleStartQuickReview = async () => {
     const cards = await getQuickReviewCards(5);
     if (cards.length === 0) {
-      // カードがない場合は通常のReviewへ
       if (recommendedDeck) {
         navigate(`/review/${recommendedDeck.deckId}`);
       }
@@ -136,12 +226,6 @@ export default function ReviewHomePage() {
     setQuickState('reviewing');
   };
 
-  // 回答を表示
-  const handleShowAnswer = () => {
-    setShowAnswer(true);
-  };
-
-  // 評価して次へ
   const handleGrade = async (grade: 'again' | 'hard' | 'good' | 'easy') => {
     const card = quickCards[currentIndex];
     await reviewCard(card.srs.deckId, card.srs.cardId, grade);
@@ -151,11 +235,10 @@ export default function ReviewHomePage() {
       setShowAnswer(false);
     } else {
       setQuickState('complete');
-      await loadData(); // カウンター更新
+      await loadData();
     }
   };
 
-  // Quick Review完了後
   const handleFinishQuickReview = () => {
     setQuickState('idle');
     setQuickCards([]);
@@ -163,7 +246,6 @@ export default function ReviewHomePage() {
     setShowAnswer(false);
   };
 
-  // Quick Review画面
   if (quickState === 'reviewing' && quickCards.length > 0) {
     const card = quickCards[currentIndex];
     return (
@@ -180,40 +262,31 @@ export default function ReviewHomePage() {
             </p>
 
             {!showAnswer && (
-              <button
-                onClick={handleShowAnswer}
-                style={{ width: '100%', marginTop: 16 }}
-              >
+              <button onClick={() => setShowAnswer(true)} style={{ width: '100%', marginTop: 16 }}>
                 答えを見る
               </button>
             )}
 
             {showAnswer && (
               <>
-                <p style={{
-                  fontSize: '1.2rem',
-                  color: 'var(--primary)',
-                  marginBottom: 24,
-                  padding: 16,
-                  background: 'rgba(255, 126, 179, 0.1)',
-                  borderRadius: 12
-                }}>
+                <p
+                  style={{
+                    fontSize: '1.2rem',
+                    color: 'var(--primary)',
+                    marginBottom: 24,
+                    padding: 16,
+                    background: 'rgba(255, 126, 179, 0.1)',
+                    borderRadius: 12
+                  }}
+                >
                   {card.lexeme.meaningJa}
                 </p>
 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
-                  <button className="secondary" onClick={() => handleGrade('again')}>
-                    🔄 もう一回
-                  </button>
-                  <button className="secondary" onClick={() => handleGrade('hard')}>
-                    😓 難しい
-                  </button>
-                  <button onClick={() => handleGrade('good')}>
-                    😊 できた
-                  </button>
-                  <button onClick={() => handleGrade('easy')}>
-                    🌟 かんたん
-                  </button>
+                  <button className="secondary" onClick={() => handleGrade('again')}>🔄 もう一回</button>
+                  <button className="secondary" onClick={() => handleGrade('hard')}>😓 難しい</button>
+                  <button onClick={() => handleGrade('good')}>😊 できた</button>
+                  <button onClick={() => handleGrade('easy')}>🌟 かんたん</button>
                 </div>
               </>
             )}
@@ -223,39 +296,26 @@ export default function ReviewHomePage() {
     );
   }
 
-  // Quick Review完了画面
   if (quickState === 'complete') {
     return (
       <section className="section-grid">
         <div className="card" style={{ textAlign: 'center', padding: 32 }}>
           <p style={{ fontSize: '2rem', marginBottom: 8 }}>🎉</p>
           <h2>今日もお疲れさま！</h2>
-          <p style={{ color: 'var(--text-muted)', marginBottom: 16 }}>
-            {quickCards.length}問クリアしたよ
-          </p>
-          <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-            少しずつでも続けてるあなたはえらい！
-          </p>
-          <button onClick={handleFinishQuickReview} style={{ marginTop: 24 }}>
-            ホームに戻る
-          </button>
+          <p style={{ color: 'var(--text-muted)', marginBottom: 16 }}>{quickCards.length}問クリアしたよ</p>
+          <button onClick={handleFinishQuickReview} style={{ marginTop: 24 }}>ホームに戻る</button>
         </div>
       </section>
     );
   }
 
-  // 通常のホーム画面
   return (
     <section className="section-grid">
-      {/* 今日の3分 - コンパクト版 */}
       <div className="card card-compact" style={{ background: 'linear-gradient(135deg, var(--primary-light), var(--secondary-light))' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h2 style={{ margin: 0 }}>⚡ きょうの3分</h2>
           {quickCount > 0 ? (
-            <button
-              onClick={handleStartQuickReview}
-              style={{ width: 'auto', padding: '8px 16px', fontSize: '0.9rem' }}
-            >
+            <button onClick={handleStartQuickReview} style={{ width: 'auto', padding: '8px 16px', fontSize: '0.9rem' }}>
               さっそく始める！
             </button>
           ) : (
@@ -264,7 +324,6 @@ export default function ReviewHomePage() {
         </div>
       </div>
 
-      {/* 主 CTA: 単語帳がない場合はfold内に大きなボタン */}
       {!recommendedDeck && (
         <div className="card" style={{ textAlign: 'center' }}>
           <p style={{ marginBottom: 12 }}>まず1つ作ってみよう 📷</p>
@@ -279,28 +338,25 @@ export default function ReviewHomePage() {
               <h2 style={{ margin: 0 }}>📚 今日の復習</h2>
               <small className="badge badge-sm">残り: {totalDue} 枚</small>
             </div>
-            <Link className="pill" to={`/review/${recommendedDeck.deckId}`}>
-              つづける
-            </Link>
+            <Link className="pill" to={`/review/${recommendedDeck.deckId}`}>つづける</Link>
           </div>
         </div>
       )}
 
       <div className="card">
-        <h2>単語帳</h2>
-        {summaries.length === 0 && <p>まだ単語帳がありません。</p>}
+        <h2>単語ノート</h2>
+        {summaries.length === 0 && <p>まだ単語ノートがありません。</p>}
         <div className="word-grid">
           {summaries.map((item) => (
             <div key={item.deckId} className="word-item">
               <div>
                 <strong>{item.title}</strong>
-                <small className="candidate-meta">
-                  今日: {item.dueCount} / 全体: {item.totalCards}
-                </small>
+                <small className="candidate-meta">今日: {item.dueCount} / 全体: {item.totalCards}</small>
               </div>
-              <Link className="pill" to={`/review/${item.deckId}`}>
-                開く
-              </Link>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <Link className="pill" to={`/review/${item.deckId}`}>開く</Link>
+                <Link className="pill" to={`/test/${item.deckId}`}>テスト</Link>
+              </div>
             </div>
           ))}
         </div>
@@ -308,31 +364,112 @@ export default function ReviewHomePage() {
 
       <div className="card">
         <h2>学校単語帳</h2>
-        <p className="notice">先生向けに作られた単語セットを、そのまま復習に追加できます。</p>
-        {wordbankLoading && <p className="counter">読み込み中…</p>}
-        {!wordbankLoading && wordbankDecks.length === 0 && (
-          <p className="counter">公開されている単語帳はまだありません。</p>
+        <p className="notice">
+          ここではステップだけ選びます。5/10/20語の区切り追加は、学習開始後の復習画面で行います。
+        </p>
+
+        {tracks.length > 0 && (
+          <>
+            <div className="pill-group">
+              {tracks.map((track) => (
+                <button
+                  type="button"
+                  key={track.trackId}
+                  className={track.trackId === (selectedTrack?.trackId ?? '') ? '' : 'secondary'}
+                  onClick={() => setSelectedTrackId(track.trackId)}
+                >
+                  {track.title}
+                </button>
+              ))}
+            </div>
+
+            {selectedTrack && (
+              <div className="word-grid" style={{ marginTop: 12 }}>
+                <p className="counter">{selectedTrack.description}</p>
+                {selectedTrack.steps.map((step) => {
+                  const progress = stepProgress[step.stepId];
+                  const learned = progress?.offset ?? 0;
+                  const importing = wordbankImportingId === step.stepId;
+                  return (
+                    <div key={step.stepId} className="word-item" style={{ alignItems: 'flex-start' }}>
+                      <div>
+                        <strong>{step.title}</strong>
+                        <small className="candidate-meta">{step.wordCount}語 ・ 取り込み済み {Math.min(learned, step.wordCount)}語</small>
+                        <small className="candidate-meta">{step.description}</small>
+                        {step.note && <small className="candidate-meta">{step.note}</small>}
+                      </div>
+                      <button
+                        type="button"
+                        className="pill"
+                        onClick={() => handleStartCurriculumStep(step)}
+                        disabled={importing}
+                      >
+                        {importing ? '準備中…' : learned > 0 ? 'つづきを開く' : '学習を始める'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
         )}
-        <div className="word-grid">
-          {wordbankDecks.map((deck) => (
-            <div key={deck.deckId} className="word-item">
+
+        {allRange && (
+          <details style={{ marginTop: 12 }}>
+            <summary>全範囲（上級者向け）</summary>
+            <div className="word-item" style={{ marginTop: 10 }}>
               <div>
-                <strong>{deck.title}</strong>
-                <small className="candidate-meta">
-                  {deck.wordCount}語 {deck.description ? `・${deck.description}` : ''}
-                </small>
+                <strong>{allRange.title}</strong>
+                <small className="candidate-meta">{allRange.wordCount}語 ・ {allRange.description}</small>
               </div>
               <button
-                className="pill"
                 type="button"
-                onClick={() => handleStartWordbankDeck(deck.deckId)}
-                disabled={wordbankImportingId === deck.deckId}
+                className="pill"
+                onClick={() => handleStartWordbankDeck(allRange.deckId)}
+                disabled={wordbankImportingId === allRange.deckId}
               >
-                {wordbankImportingId === deck.deckId ? '追加中…' : '学習を始める'}
+                {wordbankImportingId === allRange.deckId ? '追加中…' : '学習を始める'}
               </button>
             </div>
-          ))}
-        </div>
+          </details>
+        )}
+
+        <button
+          type="button"
+          className="secondary"
+          style={{ marginTop: 12 }}
+          onClick={() => setShowRawDecks((prev) => !prev)}
+        >
+          {showRawDecks ? '詳細デッキを閉じる' : '詳細デッキを表示'}
+        </button>
+
+        {showRawDecks && (
+          <div className="word-grid" style={{ marginTop: 12 }}>
+            {wordbankLoading && <p className="counter">読み込み中…</p>}
+            {!wordbankLoading && wordbankDecks.length === 0 && (
+              <p className="counter">公開されている単語帳はまだありません。</p>
+            )}
+            {wordbankDecks.map((deck) => (
+              <div key={deck.deckId} className="word-item">
+                <div>
+                  <strong>{deck.title}</strong>
+                  <small className="candidate-meta">
+                    {deck.wordCount}語 {deck.description ? `・${deck.description}` : ''}
+                  </small>
+                </div>
+                <button
+                  className="pill"
+                  type="button"
+                  onClick={() => handleStartWordbankDeck(deck.deckId)}
+                  disabled={wordbankImportingId === deck.deckId}
+                >
+                  {wordbankImportingId === deck.deckId ? '追加中…' : '学習を始める'}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         {wordbankStatus && <p className="counter">{wordbankStatus}</p>}
       </div>
     </section>

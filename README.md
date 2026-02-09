@@ -33,7 +33,32 @@ npx wrangler d1 create nanjyo_lexicon
 npx wrangler d1 migrations apply nanjyo_lexicon --local
 ```
 
-### 3) 起動
+### 3) Core Wordbank投入（アプリ内単語データベース）
+
+`core_words / core_decks / core_deck_words` に公式CSVを投入します。
+
+```bash
+npm run wordbank:seed
+```
+
+- デフォルトCSV: `docs/wordbank_pos_audit/20260208_225334/ORIGINAL_WORDBANK_JHS_HS_FINAL_CONFIRMED.csv`
+- 反映先: ローカルD1（`.wrangler/state/v3/d1`）
+- 生成デッキ: 速習6 / 標準6 / 全範囲1
+- `headword_norm` 衝突は正規化規則で自動解決（`--out-dir` 指定時に `headword_norm_collisions.csv` を出力）
+
+リモートD1へ反映する場合:
+
+```bash
+npm run wordbank:seed:remote
+```
+
+カスタムCSVを使う場合:
+
+```bash
+node scripts/seed-core-wordbank.mjs --csv /absolute/path/to/wordbank.csv
+```
+
+### 4) 起動
 
 ```bash
 npm run dev
@@ -42,7 +67,7 @@ npm run dev
 - フロント: `http://localhost:5173`
 - API (Worker): `http://127.0.0.1:8787`
 
-### 4) チェック
+### 5) チェック
 
 ```bash
 npm run lint
@@ -50,7 +75,7 @@ npm run typecheck
 npm run build
 ```
 
-### 5) デプロイ
+### 6) デプロイ
 
 ```bash
 npm run deploy
@@ -79,6 +104,12 @@ Cloud Vision:
 
 ```bash
 npx wrangler secret put GOOGLE_VISION_API_KEY
+```
+
+管理者機能（生徒監視・テスト作成）:
+
+```bash
+npx wrangler secret put ADMIN_TOKEN
 ```
 
 Workers AIを使う場合:
@@ -113,8 +144,10 @@ npx wrangler secret put WORKERS_AI_API_TOKEN
   - `/scan` OCR〜単語ノート作成のウィザード
   - `/review` 今日の復習ホーム
   - `/review/:deckId` デッキごとの復習
+  - `/test/:deckId` ノート単位のオンラインテスト（4択/入力/ミックス）
   - `/character` 進捗表示
   - `/settings` OCR・クラウド機能設定
+  - `/admin` 管理者向け（生徒進捗監視 / テスト作成 / 印刷）
 
 ## Scanフロー（5ステップ）
 
@@ -134,7 +167,10 @@ npx wrangler secret put WORKERS_AI_API_TOKEN
 
 - Core Wordbank:
   - `core_words` / `core_decks` / `core_deck_words` で配信単語帳を管理
-  - `/review` から「学校単語帳」を選び、ローカルSRSに取り込んで学習開始
+  - `/review` では「速習 / 標準」のステップ式カリキュラムを優先表示（`全範囲` は折りたたみ）
+  - 中1〜中3を1ステップに束ねず、`中1 → 中2要点+中3導入 → 中3` の段階で進める
+  - 中2語彙が少ない問題に対して、中3導入語を橋渡しとして追加し学習量を平準化
+  - 5/10/20語区切りで段階的に取り込み可能（次回開始位置を保持）
 - Community (Word Repo):
   - Changesetベースの提案→校正→マージ
   - 確定語彙は `ugc_lexeme_canonical`
@@ -241,45 +277,63 @@ npx wrangler secret put WORKERS_AI_API_TOKEN
 
 - 出力: `deck` 一覧（タイトル、語数、source）
 
-### 7) `GET /api/v1/wordbank/decks/:deckId/words`
+### 7) `GET /api/v1/wordbank/curriculum`
+
+- 出力: 速習/標準トラックとステップ情報（学習順・語数・推奨区切り）
+
+### 8) `GET /api/v1/wordbank/decks/:deckId/words`
 
 - 出力: 指定デッキの語彙一覧（`headword_norm`, `meaning_ja_short`）
 
-### 8) `POST /api/v1/wordbank/admin/upsert-words` (Admin)
+### 9) `POST /api/v1/wordbank/decks/words-batch`
+
+- 入力: `{ deckIds: string[] }`
+- 出力: 複数デッキを順序維持で結合し、重複除去した語彙一覧
+- 備考: カリキュラム内部では `slice:<deckId>:<start>:<end>` 形式で範囲分割デッキを扱える
+
+### 10) `POST /api/v1/wordbank/admin/upsert-words` (Admin)
 
 - ヘッダ: `x-admin-token` または `Authorization: Bearer <ADMIN_TOKEN>`
 - 入力: words/decks のupsert
 
-### 9) `POST /api/v1/community/changesets`
+### 11) `GET /api/v1/admin/students` (Admin)
+
+- 生徒ごとの進捗サマリ（Lv/XP/履修語数/最終同期）を返す
+
+### 12) `GET /api/v1/admin/students/:userId/words` (Admin)
+
+- 指定生徒の履修語（テスト作成元）を返す
+
+### 13) `POST /api/v1/community/changesets`
 
 - 提案（changeset）を作成
 
-### 10) `POST /api/v1/community/changesets/:id/items`
+### 14) `POST /api/v1/community/changesets/:id/items`
 
 - 提案に単語差分を追加
 
-### 11) `POST /api/v1/community/changesets/:id/submit`
+### 15) `POST /api/v1/community/changesets/:id/submit`
 
 - `draft -> proposed`
 
-### 12) `POST /api/v1/community/changesets/:id/review`
+### 16) `POST /api/v1/community/changesets/:id/review`
 
 - `approve / request_changes / comment`
 
-### 13) `POST /api/v1/community/changesets/:id/merge`
+### 17) `POST /api/v1/community/changesets/:id/merge`
 
 - editor以上が実行
 - canonical更新 + history追記
 
-### 14) `GET /api/v1/community/tasks`
+### 18) `GET /api/v1/community/tasks`
 
 - 今日の冒険タスクと利用可能トークンを取得
 
-### 15) `POST /api/v1/community/tasks/:taskId/complete`
+### 19) `POST /api/v1/community/tasks/:taskId/complete`
 
 - タスク完了処理。条件達成で報酬デッキ（headword集合）を返却
 
-### 16) `POST /api/v1/usage/report`
+### 20) `POST /api/v1/usage/report`
 
 - 入力: `{ minutesToday }`
 - サーバで `proofread_tokens_today` を再計算
@@ -302,3 +356,10 @@ D1 `usage_daily` で `userId + 日付` ごとにカウントします。
 - `docs/screen-spec.md`
 - `docs/ui-ux-adjustment-guide.md`
 - `docs/uiux_ocr_notes.md`
+
+## テスト機能（オンライン + 紙配布）
+
+- 生徒向け: `/test/:deckId` で 5/10/20問のオンラインテスト
+- 管理者向け: `/admin` で生徒の履修語からテスト作成
+- 紙配布: 「印刷シート（PDF）」ボタンで印刷画面を開き、ブラウザの「PDFとして保存」で配布可能
+- 生徒データを管理画面で見るには、`/settings` の「☁️ 学習データを同期」を実行してクラウドへ送信

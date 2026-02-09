@@ -21,6 +21,8 @@ export interface Env {
   ADMIN_TOKEN?: string;
   ALLOW_DEV_MAGIC_LINK?: string;
   PROOFREAD_TOKEN_MAX?: string;
+  RESEND_API_KEY?: string;
+  RESEND_FROM_EMAIL?: string;
 }
 
 type AuthContext = {
@@ -101,6 +103,10 @@ type WordbankAdminUpsertRequest = {
     source?: string;
     headwordNorms?: string[];
   }>;
+};
+
+type WordbankDeckBatchWordsRequest = {
+  deckIds: string[];
 };
 
 type CreateChangesetRequest = {
@@ -763,6 +769,72 @@ const suggestMeanings = async (env: Env, headwords: string[]) => {
 
 const isValidEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
+/**
+ * Resend APIを使ってマジックリンクメールを送信
+ */
+const sendMagicLinkEmail = async (env: Env, to: string, magicLink: string): Promise<{ success: boolean; error?: string }> => {
+  const apiKey = env.RESEND_API_KEY;
+  if (!apiKey) {
+    console.error('RESEND_API_KEY is not configured');
+    return { success: false, error: 'Email service not configured' };
+  }
+
+  const fromEmail = env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
+
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        from: `えいたんメイト <${fromEmail}>`,
+        to: [to],
+        subject: '【えいたんメイト】ログインリンク',
+        html: `
+          <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h1 style="color: #FF7EB3; font-size: 24px;">えいたんメイト</h1>
+            <p>以下のボタンをクリックしてログインしてください。</p>
+            <p style="margin: 30px 0;">
+              <a href="${magicLink}" 
+                 style="background: linear-gradient(135deg, #FF7EB3 0%, #FF758C 100%); 
+                        color: white; 
+                        padding: 14px 28px; 
+                        text-decoration: none; 
+                        border-radius: 8px;
+                        font-weight: bold;
+                        display: inline-block;">
+                ログインする
+              </a>
+            </p>
+            <p style="color: #888; font-size: 14px;">
+              このリンクは15分間有効です。<br>
+              心当たりがない場合はこのメールを無視してください。
+            </p>
+            <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+            <p style="color: #aaa; font-size: 12px;">
+              リンクが機能しない場合は、以下のURLをブラウザにコピー＆ペーストしてください：<br>
+              <a href="${magicLink}" style="color: #FF7EB3; word-break: break-all;">${magicLink}</a>
+            </p>
+          </div>
+        `
+      })
+    });
+
+    if (!response.ok) {
+      const errorData = await response.text();
+      console.error('Resend API error:', errorData);
+      return { success: false, error: `Email send failed: ${response.status}` };
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('Email send error:', error);
+    return { success: false, error: 'Network error while sending email' };
+  }
+};
+
 const shouldExposeDevMagicLink = (env: Env) => parseBoolean(env.ALLOW_DEV_MAGIC_LINK, false);
 
 const MAGIC_LINK_EXPIRY_MS = 15 * 60 * 1000;
@@ -1089,9 +1161,24 @@ const handleRequestMagicLink = async (request: Request, env: Env) => {
   const appUrl = env.APP_URL?.trim() || 'http://localhost:5173';
   const magicLink = `${appUrl}/auth/verify?token=${encodeURIComponent(token)}`;
 
+  // Resend APIでメール送信
+  const emailResult = await sendMagicLinkEmail(env, email, magicLink);
+
+  if (!emailResult.success) {
+    // メール送信失敗時もdev環境ではリンクを返す
+    if (shouldExposeDevMagicLink(env)) {
+      return jsonResponse({
+        ok: true,
+        message: 'メール送信に失敗しましたが、開発用リンクを発行しました。',
+        _dev: { magicLink }
+      });
+    }
+    return jsonResponse({ ok: false, message: 'メール送信に失敗しました。しばらくしてからお試しください。' }, { status: 500 });
+  }
+
   const response: Record<string, unknown> = {
     ok: true,
-    message: 'マジックリンクを送信しました。'
+    message: 'マジックリンクを送信しました。メールをご確認ください。'
   };
 
   if (shouldExposeDevMagicLink(env)) {
@@ -1318,9 +1405,23 @@ const handleLinkAccount = async (request: Request, env: Env, auth: AuthContext) 
   const appUrl = env.APP_URL?.trim() || 'http://localhost:5173';
   const magicLink = `${appUrl}/auth/verify?token=${encodeURIComponent(token)}`;
 
+  // Resend APIでメール送信
+  const emailResult = await sendMagicLinkEmail(env, email, magicLink);
+
+  if (!emailResult.success) {
+    if (shouldExposeDevMagicLink(env)) {
+      return jsonResponse({
+        ok: true,
+        message: 'メール送信に失敗しましたが、開発用リンクを発行しました。',
+        _dev: { magicLink }
+      });
+    }
+    return jsonResponse({ ok: false, message: 'メール送信に失敗しました。' }, { status: 500 });
+  }
+
   const response: Record<string, unknown> = {
     ok: true,
-    message: '確認メールを送信しました。'
+    message: '確認メールを送信しました。メールをご確認ください。'
   };
   if (shouldExposeDevMagicLink(env)) {
     response._dev = { magicLink };
@@ -2158,8 +2259,8 @@ const handleAiMeaningSuggest = async (request: Request, env: Env, auth: AuthCont
   }
 };
 
-const handleWordbankDecks = async (env: Env) => {
-  const result = await dbAll<{
+const fetchWordbankDeckSummaries = async (env: Env) =>
+  dbAll<{
     deck_id: string;
     title: string;
     description: string | null;
@@ -2179,38 +2280,68 @@ const handleWordbankDecks = async (env: Env) => {
        FROM core_decks d
        LEFT JOIN core_deck_words dw ON dw.deck_id = d.deck_id
        GROUP BY d.deck_id, d.title, d.description, d.source, d.created_at
-       ORDER BY d.created_at DESC, d.title`
+      ORDER BY d.created_at DESC, d.title`
     )
   );
 
-  return jsonResponse({
-    ok: true,
-    decks: (result.results ?? []).map((row) => ({
-      deckId: row.deck_id,
-      title: row.title,
-      description: row.description ?? '',
-      source: row.source ?? 'core',
-      wordCount: Number(row.word_count ?? 0),
-      createdAt: row.created_at
-    }))
-  });
+type WordbankDeckSummaryRow = {
+  deck_id: string;
+  title: string;
+  description: string | null;
+  word_count: number;
 };
 
-const handleWordbankDeckWords = async (env: Env, deckId: string) => {
-  const result = await dbAll<{
-    deck_id: string;
-    title: string;
-    description: string | null;
-    source: string | null;
-    order_index: number;
-    word_id: string;
-    headword: string;
-    headword_norm: string;
-    meaning_ja_short: string;
-    pos: string | null;
-    level: string | null;
-    tags_json: string | null;
-  }>(
+type WordbankDeckSummary = {
+  deckId: string;
+  title: string;
+  description: string;
+  wordCount: number;
+};
+
+type CoreDeckWordRow = {
+  deck_id: string;
+  title: string;
+  description: string | null;
+  source: string | null;
+  order_index: number;
+  word_id: string;
+  headword: string;
+  headword_norm: string;
+  meaning_ja_short: string;
+  pos: string | null;
+  level: string | null;
+  tags_json: string | null;
+};
+
+const SLICE_DECK_PREFIX = 'slice:';
+
+const toSliceDeckRef = (deckId: string, start: number, end: number) =>
+  `${SLICE_DECK_PREFIX}${deckId}:${Math.max(0, Math.floor(start))}:${Math.max(0, Math.floor(end))}`;
+
+const parseSliceDeckRef = (deckRef: string) => {
+  if (!deckRef.startsWith(SLICE_DECK_PREFIX)) return null;
+  const raw = deckRef.slice(SLICE_DECK_PREFIX.length);
+  const match = /^([a-z0-9_]+):([0-9]+):([0-9]+)$/i.exec(raw);
+  if (!match) return null;
+  const deckId = match[1];
+  const start = Number.parseInt(match[2] ?? '0', 10);
+  const end = Number.parseInt(match[3] ?? '0', 10);
+  if (!deckId || !Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return { deckId, start: Math.max(0, start), end: Math.max(0, end) };
+};
+
+const resolveDeckRefWordCount = (deckRef: string, deckMap: Map<string, WordbankDeckSummary>) => {
+  const slice = parseSliceDeckRef(deckRef);
+  if (!slice) return deckMap.get(deckRef)?.wordCount ?? 0;
+  const base = deckMap.get(slice.deckId);
+  if (!base) return 0;
+  const start = Math.min(slice.start, base.wordCount);
+  const end = Math.min(Math.max(slice.end, start), base.wordCount);
+  return Math.max(0, end - start);
+};
+
+const fetchDeckWords = async (env: Env, deckId: string) =>
+  dbAll<CoreDeckWordRow>(
     dbBind(
       dbPrepare(
         env.DB,
@@ -2237,17 +2368,268 @@ const handleWordbankDeckWords = async (env: Env, deckId: string) => {
     )
   );
 
-  const rows = result.results ?? [];
+const fetchDeckWordsByRef = async (
+  env: Env,
+  deckRef: string,
+  cache: Map<string, CoreDeckWordRow[]> = new Map()
+) => {
+  const slice = parseSliceDeckRef(deckRef);
+  if (!slice) {
+    if (cache.has(deckRef)) return cache.get(deckRef) ?? [];
+    const rows = (await fetchDeckWords(env, deckRef)).results ?? [];
+    cache.set(deckRef, rows);
+    return rows;
+  }
+
+  const baseDeckId = slice.deckId;
+  let baseRows = cache.get(baseDeckId);
+  if (!baseRows) {
+    baseRows = (await fetchDeckWords(env, baseDeckId)).results ?? [];
+    cache.set(baseDeckId, baseRows);
+  }
+
+  const start = Math.min(slice.start, baseRows.length);
+  const end = Math.min(Math.max(slice.end, start), baseRows.length);
+  return baseRows.slice(start, end);
+};
+
+const handleWordbankDecks = async (env: Env) => {
+  const result = await fetchWordbankDeckSummaries(env);
+  return jsonResponse({
+    ok: true,
+    decks: (result.results ?? []).map((row) => ({
+      deckId: row.deck_id,
+      title: row.title,
+      description: row.description ?? '',
+      source: row.source ?? 'core',
+      wordCount: Number(row.word_count ?? 0),
+      createdAt: row.created_at
+    }))
+  });
+};
+
+const handleWordbankCurriculum = async (env: Env) => {
+  const result = await fetchWordbankDeckSummaries(env);
+  const rows = (result.results ?? []) as WordbankDeckSummaryRow[];
+  const deckMap = new Map(
+    rows.map((row) => [
+      row.deck_id,
+      {
+        deckId: row.deck_id,
+        title: row.title,
+        description: row.description ?? '',
+        wordCount: Number(row.word_count ?? 0)
+      }
+    ])
+  ) as Map<string, WordbankDeckSummary>;
+
+  const buildStep = (input: {
+    stepId: string;
+    title: string;
+    description: string;
+    deckIds: string[];
+    note?: string;
+    recommendedChunk?: number;
+  }) => {
+    const deckIds = input.deckIds.filter((deckId) => resolveDeckRefWordCount(deckId, deckMap) > 0);
+    const wordCount = deckIds.reduce((sum, deckId) => sum + resolveDeckRefWordCount(deckId, deckMap), 0);
+    return {
+      ...input,
+      deckIds,
+      wordCount
+    };
+  };
+
+  const deckCount = (deckId: string) => deckMap.get(deckId)?.wordCount ?? 0;
+  const sliceUntil = (deckId: string, end: number) => toSliceDeckRef(deckId, 0, end);
+  const sliceFrom = (deckId: string, start: number) => toSliceDeckRef(deckId, start, deckCount(deckId));
+  const sliceRange = (deckId: string, start: number, end: number) => toSliceDeckRef(deckId, start, end);
+
+  const defaultG9SplitA = Math.min(deckCount('default_g9_jhs3'), 900);
+  const defaultG9SplitB = Math.min(deckCount('default_g9_jhs3'), 2500);
+  const defaultG10Split = Math.min(deckCount('default_g10_hs1'), 1200);
+  const defaultG11Split = Math.min(deckCount('default_g11_hs2'), 600);
+  const defaultG12Split = Math.min(deckCount('default_g12_hs3'), 1500);
+
+  const standardG9Split = Math.min(deckCount('standard_g9_jhs3'), 700);
+  const standardG10Split = Math.min(deckCount('standard_g10_hs1'), 1000);
+  const standardG12SplitA = Math.min(deckCount('standard_g12_hs3'), 2200);
+  const standardG12SplitB = Math.min(deckCount('standard_g12_hs3'), 4400);
+
+  const acceleratedSteps = [
+    buildStep({
+      stepId: 'accelerated_jhs1',
+      title: '中1基礎（速習）',
+      description: '中1の必修語を先に固めます。',
+      deckIds: ['default_g7_jhs1'],
+      recommendedChunk: 10
+    }),
+    buildStep({
+      stepId: 'accelerated_jhs2_bridge',
+      title: '中2要点＋中3導入（速習）',
+      description: '中2が短い分を中3前半で補い、学習量を平準化します。',
+      deckIds: ['default_g8_jhs2', sliceUntil('default_g9_jhs3', defaultG9SplitA)],
+      note: '中2単独の語数が少ないため、中3導入を同時に進めます。',
+      recommendedChunk: 10
+    }),
+    buildStep({
+      stepId: 'accelerated_jhs3_core',
+      title: '中3コア（速習）',
+      description: '中3の中心語彙を固めます。',
+      deckIds: [sliceRange('default_g9_jhs3', defaultG9SplitA, defaultG9SplitB)],
+      recommendedChunk: 10
+    }),
+    buildStep({
+      stepId: 'accelerated_jhs3_plus',
+      title: '中3仕上げ（速習）',
+      description: '中学範囲の抜け漏れを最終確認します。',
+      deckIds: [sliceFrom('default_g9_jhs3', defaultG9SplitB)],
+      recommendedChunk: 10
+    }),
+    buildStep({
+      stepId: 'accelerated_hs1_1',
+      title: '高1完了①（速習）',
+      description: '高校語彙の土台を高1前半で進めます。',
+      deckIds: [sliceUntil('default_g10_hs1', defaultG10Split)],
+      recommendedChunk: 20
+    }),
+    buildStep({
+      stepId: 'accelerated_hs1_2',
+      title: '高1完了②（速習）',
+      description: '高1内で高校中心語彙を完走する段階です。',
+      deckIds: [sliceFrom('default_g10_hs1', defaultG10Split), sliceUntil('default_g11_hs2', defaultG11Split)],
+      note: '高1終了までに高校レベル中心語彙を終える速習設計です。',
+      recommendedChunk: 20
+    }),
+    buildStep({
+      stepId: 'accelerated_hs_plus_1',
+      title: '高2〜高3発展①（速習）',
+      description: '難関語彙を先取りで固める発展パートです。',
+      deckIds: [sliceFrom('default_g11_hs2', defaultG11Split), sliceUntil('default_g12_hs3', defaultG12Split)],
+      recommendedChunk: 20
+    }),
+    buildStep({
+      stepId: 'accelerated_hs_plus_2',
+      title: '高2〜高3発展②（速習）',
+      description: '難関語彙の後半を固めて仕上げます。',
+      deckIds: [sliceFrom('default_g12_hs3', defaultG12Split)],
+      recommendedChunk: 20
+    })
+  ].filter((step) => step.wordCount > 0);
+
+  const standardSteps = [
+    buildStep({
+      stepId: 'standard_jhs1',
+      title: '中1標準',
+      description: '中1の必修語を丁寧に定着させます。',
+      deckIds: ['standard_g7_jhs1'],
+      recommendedChunk: 10
+    }),
+    buildStep({
+      stepId: 'standard_jhs2_bridge',
+      title: '中2要点＋中3導入（標準）',
+      description: '中2の短い範囲を中3導入と一体で進めます。',
+      deckIds: ['standard_g8_jhs2', sliceUntil('standard_g9_jhs3', standardG9Split)],
+      note: '中2単独の語数差を吸収するための橋渡しステップです。',
+      recommendedChunk: 10
+    }),
+    buildStep({
+      stepId: 'standard_jhs3',
+      title: '中3標準',
+      description: '中学範囲を安定させる最終ステップです。',
+      deckIds: [sliceFrom('standard_g9_jhs3', standardG9Split)],
+      recommendedChunk: 10
+    }),
+    buildStep({
+      stepId: 'standard_hs1_1',
+      title: '高1標準①',
+      description: '高1前半の頻出語を固めます。',
+      deckIds: [sliceUntil('standard_g10_hs1', standardG10Split)],
+      recommendedChunk: 20
+    }),
+    buildStep({
+      stepId: 'standard_hs1_2',
+      title: '高1標準②',
+      description: '高1後半の語彙まで段階的に進めます。',
+      deckIds: [sliceFrom('standard_g10_hs1', standardG10Split)],
+      recommendedChunk: 20
+    }),
+    buildStep({
+      stepId: 'standard_hs2',
+      title: '高2標準',
+      description: '高2で読解語彙を強化します。',
+      deckIds: ['standard_g11_hs2'],
+      recommendedChunk: 20
+    }),
+    buildStep({
+      stepId: 'standard_hs3_1',
+      title: '高3発展①',
+      description: '高3発展語彙の前半です。',
+      deckIds: [sliceUntil('standard_g12_hs3', standardG12SplitA)],
+      recommendedChunk: 20
+    }),
+    buildStep({
+      stepId: 'standard_hs3_2',
+      title: '高3発展②',
+      description: '高3発展語彙の中盤です。',
+      deckIds: [sliceRange('standard_g12_hs3', standardG12SplitA, standardG12SplitB)],
+      recommendedChunk: 20
+    }),
+    buildStep({
+      stepId: 'standard_hs3_3',
+      title: '高3発展③',
+      description: '高3発展語彙の仕上げです。',
+      deckIds: [sliceFrom('standard_g12_hs3', standardG12SplitB)],
+      recommendedChunk: 20
+    })
+  ].filter((step) => step.wordCount > 0);
+
+  const allRangeDeck = deckMap.get('all_jhs_hs');
+
+  return jsonResponse({
+    ok: true,
+    tracks: [
+      {
+        trackId: 'accelerated',
+        title: '速習',
+        description: '高1までに高校レベルの中心語彙を終えるコース',
+        steps: acceleratedSteps
+      },
+      {
+        trackId: 'standard',
+        title: '標準',
+        description: '高3までに段階的に完成させるコース',
+        steps: standardSteps
+      }
+    ],
+    allRange: allRangeDeck
+      ? {
+        deckId: allRangeDeck.deckId,
+        title: '全範囲',
+        description: allRangeDeck.description || '中1〜高3の全範囲を一括で学ぶデッキ',
+        wordCount: allRangeDeck.wordCount
+      }
+      : null
+  });
+};
+
+const handleWordbankDeckWords = async (env: Env, deckId: string) => {
+  const rows = await fetchDeckWordsByRef(env, deckId);
   if (rows.length === 0) {
     return jsonResponse({ ok: false, message: 'Deck not found.' }, { status: 404 });
   }
+  const slice = parseSliceDeckRef(deckId);
+  const deckTitle = slice ? `${rows[0].title}（範囲指定）` : rows[0].title;
+  const deckDescription = slice
+    ? `${rows[0].description ?? ''} / ${slice.deckId} の ${slice.start + 1}〜${Math.max(slice.start + 1, slice.end)} 語`
+    : rows[0].description ?? '';
 
   return jsonResponse({
     ok: true,
     deck: {
-      deckId: rows[0].deck_id,
-      title: rows[0].title,
-      description: rows[0].description ?? '',
+      deckId,
+      title: deckTitle,
+      description: deckDescription,
       source: rows[0].source ?? 'core'
     },
     words: rows.map((row) => ({
@@ -2268,6 +2650,52 @@ const handleWordbankDeckWords = async (env: Env, deckId: string) => {
       orderIndex: row.order_index
     }))
   });
+};
+
+const handleWordbankBatchWords = async (request: Request, env: Env) => {
+  let body: WordbankDeckBatchWordsRequest;
+  try {
+    body = await request.json();
+  } catch {
+    return badRequest('Invalid JSON.');
+  }
+  if (!body || !Array.isArray(body.deckIds) || body.deckIds.length === 0) {
+    return badRequest('deckIds is required.');
+  }
+  if (body.deckIds.length > 12) {
+    return badRequest('deckIds must be 12 or fewer.');
+  }
+
+  const seenNorm = new Set<string>();
+  const deckWordCache = new Map<string, CoreDeckWordRow[]>();
+  const words: Array<{
+    headwordNorm: string;
+    headword: string;
+    meaningJaShort: string;
+    deckId: string;
+    orderIndex: number;
+  }> = [];
+
+  for (const rawDeckId of body.deckIds) {
+    if (typeof rawDeckId !== 'string') continue;
+    const deckId = sanitizeSingleLine(rawDeckId).slice(0, 96);
+    if (!deckId) continue;
+    const rows = await fetchDeckWordsByRef(env, deckId, deckWordCache);
+    for (const row of rows) {
+      const norm = row.headword_norm;
+      if (!norm || seenNorm.has(norm)) continue;
+      seenNorm.add(norm);
+      words.push({
+        headwordNorm: norm,
+        headword: row.headword,
+        meaningJaShort: row.meaning_ja_short,
+        deckId,
+        orderIndex: row.order_index
+      });
+    }
+  }
+
+  return jsonResponse({ ok: true, words });
 };
 
 const handleWordbankAdminUpsert = async (request: Request, env: Env) => {
@@ -2413,6 +2841,131 @@ const handleWordbankAdminUpsert = async (request: Request, env: Env) => {
   }
 
   return jsonResponse({ ok: true, upsertedWords: words.length, upsertedDecks: decks.length });
+};
+
+const handleAdminStudents = async (request: Request, env: Env) => {
+  if (!requireAdmin(request, env)) {
+    return forbidden('Admin token is required.');
+  }
+
+  const rows = await dbAll<{
+    user_id: string;
+    email: string | null;
+    created_at: number;
+    last_login_at: number | null;
+    xp_total: number | null;
+    level: number | null;
+    synced_at: number | null;
+    card_count: number;
+    learned_count: number;
+  }>(
+    dbPrepare(
+      env.DB,
+      `SELECT
+         u.user_id,
+         u.email,
+         u.created_at,
+         u.last_login_at,
+         p.xp_total,
+         p.level,
+         p.synced_at,
+         (
+           SELECT COUNT(*)
+           FROM user_cards c
+           WHERE c.user_id = u.user_id
+             AND c.deleted_at IS NULL
+         ) AS card_count,
+         (
+           SELECT COUNT(*)
+           FROM user_cards c
+           WHERE c.user_id = u.user_id
+             AND c.deleted_at IS NULL
+             AND c.meaning_ja IS NOT NULL
+         ) AS learned_count
+       FROM users u
+       LEFT JOIN user_progress p ON p.user_id = u.user_id
+       ORDER BY COALESCE(p.synced_at, u.last_login_at, u.created_at) DESC
+       LIMIT 200`
+    )
+  );
+
+  return jsonResponse({
+    ok: true,
+    students: (rows.results ?? []).map((row) => ({
+      userId: row.user_id,
+      email: row.email ?? '',
+      createdAt: row.created_at,
+      lastLoginAt: row.last_login_at ?? null,
+      syncedAt: row.synced_at ?? null,
+      xpTotal: Number(row.xp_total ?? 0),
+      level: Number(row.level ?? 1),
+      cardCount: Number(row.card_count ?? 0),
+      learnedCount: Number(row.learned_count ?? 0)
+    }))
+  });
+};
+
+const handleAdminStudentWords = async (request: Request, env: Env, userId: string) => {
+  if (!requireAdmin(request, env)) {
+    return forbidden('Admin token is required.');
+  }
+
+  const limitParam = Number(new URL(request.url).searchParams.get('limit') ?? 200);
+  const limit = Math.max(10, Math.min(500, Number.isFinite(limitParam) ? Math.floor(limitParam) : 200));
+
+  const rows = await dbAll<{
+    headword_norm: string;
+    headword: string;
+    meaning_ja: string | null;
+    reps: number;
+    ease: number;
+    interval: number;
+    last_reviewed_at: number | null;
+    updated_at: number;
+  }>(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `SELECT
+           c.headword_norm,
+           c.headword,
+           COALESCE(
+             NULLIF(c.meaning_ja, ''),
+             canon.meaning_ja_short,
+             cw.meaning_ja_short
+           ) AS meaning_ja,
+           c.reps,
+           c.ease,
+           c.interval,
+           c.last_reviewed_at,
+           c.updated_at
+         FROM user_cards c
+         LEFT JOIN ugc_lexeme_canonical canon ON canon.headword_norm = c.headword_norm
+         LEFT JOIN core_words cw ON cw.headword_norm = c.headword_norm
+         WHERE c.user_id = ?1
+           AND c.deleted_at IS NULL
+         ORDER BY COALESCE(c.last_reviewed_at, c.updated_at) DESC
+         LIMIT ?2`
+      ),
+      userId,
+      limit
+    )
+  );
+
+  return jsonResponse({
+    ok: true,
+    userId,
+    words: (rows.results ?? []).map((row) => ({
+      headwordNorm: row.headword_norm,
+      headword: row.headword,
+      meaningJa: row.meaning_ja ?? '',
+      reps: Number(row.reps ?? 0),
+      ease: Number(row.ease ?? 2.5),
+      interval: Number(row.interval ?? 0),
+      lastReviewedAt: row.last_reviewed_at ?? null,
+      updatedAt: row.updated_at
+    }))
+  });
 };
 
 const ensureDailyDungeon = async (env: Env) => {
@@ -3325,6 +3878,16 @@ export default {
       return handleWordbankDecks(env);
     }
 
+    if (url.pathname === '/api/v1/wordbank/curriculum') {
+      if (request.method !== 'GET') return methodNotAllowed();
+      return handleWordbankCurriculum(env);
+    }
+
+    if (url.pathname === '/api/v1/wordbank/decks/words-batch') {
+      if (request.method !== 'POST') return methodNotAllowed();
+      return handleWordbankBatchWords(request, env);
+    }
+
     if (url.pathname.startsWith('/api/v1/wordbank/decks/')) {
       if (request.method !== 'GET') return methodNotAllowed();
       const deckId = decodeURIComponent(url.pathname.replace('/api/v1/wordbank/decks/', '').replace('/words', ''));
@@ -3337,6 +3900,23 @@ export default {
     if (url.pathname === '/api/v1/wordbank/admin/upsert-words') {
       if (request.method !== 'POST') return methodNotAllowed();
       return handleWordbankAdminUpsert(request, env);
+    }
+
+    if (url.pathname === '/api/v1/admin/students') {
+      if (request.method !== 'GET') return methodNotAllowed();
+      return handleAdminStudents(request, env);
+    }
+
+    if (url.pathname.startsWith('/api/v1/admin/students/')) {
+      if (request.method !== 'GET') return methodNotAllowed();
+      const base = '/api/v1/admin/students/';
+      const rest = url.pathname.slice(base.length);
+      const [userIdRaw, action] = rest.split('/');
+      if (!userIdRaw || action !== 'words') {
+        return jsonResponse({ ok: false, message: 'Not found.' }, { status: 404 });
+      }
+      const userId = decodeURIComponent(userIdRaw);
+      return handleAdminStudentWords(request, env, userId);
     }
 
     if (url.pathname === '/api/v1/community/changesets') {

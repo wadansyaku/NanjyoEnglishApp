@@ -11,7 +11,9 @@
     "preview": "vite preview --port 4173",
     "typecheck": "tsc -b",
     "lint": "eslint . --ext .ts,.tsx",
-    "deploy": "npm run build && wrangler deploy"
+    "deploy": "npm run build && wrangler deploy",
+    "wordbank:seed": "node scripts/seed-core-wordbank.mjs",
+    "wordbank:seed:remote": "node scripts/seed-core-wordbank.mjs --remote"
   },
   "dependencies": {
     "dexie": "^3.2.4",

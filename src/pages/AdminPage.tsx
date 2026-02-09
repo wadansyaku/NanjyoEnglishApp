@@ -1,481 +1,560 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-    listEventCounters,
-    getXpSummary,
-    type EventCounter,
-    type XpSummary,
-    getXpRequiredForLevel
-} from '../db';
+  buildPrintableTestHtml,
+  buildQuestions,
+  isTypingCorrect,
+  type TestMode,
+  type TestQuestion,
+  type TestWord
+} from '../lib/practiceTest';
 import {
-    loadABTestConfig,
-    saveABTestConfig,
-    resetAssignments,
-    type ABTest,
-    type ABTestConfig
+  loadABTestConfig,
+  resetAssignments,
+  saveABTestConfig,
+  type ABTest,
+  type ABTestConfig
 } from '../lib/abtest';
-import { defaultSettings, type AppSettings } from '../lib/settings';
-import type { OcrPsm } from '../lib/ocr';
-
-const ADMIN_PASSWORD = 'nanjyo2024'; // 簡易的なパスワード保護
-
-type AdminState = 'locked' | 'unlocked';
+import type { AppSettings } from '../lib/settings';
 
 type AdminPageProps = {
-    settings: AppSettings;
-    onChangeSettings: (settings: AppSettings) => void;
+  settings: AppSettings;
+  onChangeSettings: (settings: AppSettings) => void;
 };
 
-export default function AdminPage({ settings, onChangeSettings }: AdminPageProps) {
-    const [adminState, setAdminState] = useState<AdminState>('locked');
-    const [password, setPassword] = useState('');
-    const [passwordError, setPasswordError] = useState('');
+type StudentSummary = {
+  userId: string;
+  email: string;
+  createdAt: number;
+  lastLoginAt: number | null;
+  syncedAt: number | null;
+  xpTotal: number;
+  level: number;
+  cardCount: number;
+  learnedCount: number;
+};
 
-    const [config, setConfig] = useState<ABTestConfig | null>(null);
-    const [counters, setCounters] = useState<EventCounter[]>([]);
-    const [xpSummary, setXpSummary] = useState<XpSummary | null>(null);
+type StudentWord = {
+  headwordNorm: string;
+  headword: string;
+  meaningJa: string;
+  reps: number;
+  ease: number;
+  interval: number;
+  lastReviewedAt: number | null;
+  updatedAt: number;
+};
 
-    // 新規テスト追加用
-    const [newTestId, setNewTestId] = useState('');
-    const [newTestName, setNewTestName] = useState('');
-    const [newTestDesc, setNewTestDesc] = useState('');
-    const [newVariantA, setNewVariantA] = useState('');
-    const [newVariantB, setNewVariantB] = useState('');
+type AnswerState = {
+  questionId: string;
+  answer: string;
+  correct: boolean;
+};
 
-    const loadData = useCallback(async () => {
-        const abConfig = loadABTestConfig();
-        const events = await listEventCounters();
-        const xp = await getXpSummary();
-        setConfig(abConfig);
-        setCounters(events);
-        setXpSummary(xp);
-    }, []);
+const ADMIN_TOKEN_STORAGE_KEY = 'admin.api.token.v1';
 
-    useEffect(() => {
-        if (adminState === 'unlocked') {
-            void loadData();
-        }
-    }, [adminState, loadData]);
+const toDateLabel = (value: number | null) => {
+  if (!value) return '-';
+  return new Date(value).toLocaleString('ja-JP');
+};
 
-    const handleUnlock = () => {
-        if (password === ADMIN_PASSWORD) {
-            setAdminState('unlocked');
-            setPasswordError('');
-        } else {
-            setPasswordError('パスワードが違います');
-        }
-    };
+const modeLabels: Record<TestMode, string> = {
+  choice: '4択（英語→日本語）',
+  typing: '入力（日本語→英語）',
+  reverse: '逆4択（日本語→英語）',
+  mixed: 'ミックス'
+};
 
-    const handleToggleTest = (testId: string) => {
-        if (!config) return;
-        const updated = {
-            ...config,
-            tests: config.tests.map((t) =>
-                t.id === testId ? { ...t, active: !t.active } : t
-            )
-        };
-        saveABTestConfig(updated);
-        setConfig(updated);
-    };
+export default function AdminPage(_props: AdminPageProps) {
+  void _props;
 
-    const handleResetAssignments = () => {
-        if (!confirm('全ユーザーの割り当てをリセットしますか？')) return;
-        resetAssignments();
-        void loadData();
-    };
+  const [tokenInput, setTokenInput] = useState('');
+  const [token, setToken] = useState('');
+  const [authStatus, setAuthStatus] = useState('');
 
-    const handleAddTest = () => {
-        if (!config) return;
-        if (!newTestId.trim() || !newTestName.trim()) return;
+  const [students, setStudents] = useState<StudentSummary[]>([]);
+  const [studentsLoading, setStudentsLoading] = useState(false);
+  const [studentsError, setStudentsError] = useState('');
 
-        const newTest: ABTest = {
-            id: newTestId.trim().toLowerCase().replace(/\s+/g, '_'),
-            name: newTestName.trim(),
-            description: newTestDesc.trim(),
-            variants: {
-                A: newVariantA.trim() || 'バリアントA',
-                B: newVariantB.trim() || 'バリアントB'
-            },
-            active: false,
-            createdAt: Date.now()
-        };
+  const [selectedUserId, setSelectedUserId] = useState('');
+  const [words, setWords] = useState<StudentWord[]>([]);
+  const [wordsLoading, setWordsLoading] = useState(false);
+  const [wordsError, setWordsError] = useState('');
 
-        const updated = {
-            ...config,
-            tests: [...config.tests, newTest]
-        };
-        saveABTestConfig(updated);
-        setConfig(updated);
+  const [mode, setMode] = useState<TestMode>('mixed');
+  const [questionCount, setQuestionCount] = useState(10);
+  const [questions, setQuestions] = useState<TestQuestion[]>([]);
+  const [index, setIndex] = useState(0);
+  const [typing, setTyping] = useState('');
+  const [answers, setAnswers] = useState<AnswerState[]>([]);
 
-        // フォームリセット
-        setNewTestId('');
-        setNewTestName('');
-        setNewTestDesc('');
-        setNewVariantA('');
-        setNewVariantB('');
-    };
+  const [abConfig, setAbConfig] = useState<ABTestConfig>(() => loadABTestConfig());
+  const [newTestId, setNewTestId] = useState('');
+  const [newTestName, setNewTestName] = useState('');
+  const [newTestDesc, setNewTestDesc] = useState('');
+  const [newVariantA, setNewVariantA] = useState('');
+  const [newVariantB, setNewVariantB] = useState('');
 
-    const handleDeleteTest = (testId: string) => {
-        if (!config) return;
-        if (!confirm(`テスト「${testId}」を削除しますか？`)) return;
-
-        const updated = {
-            ...config,
-            tests: config.tests.filter((t) => t.id !== testId)
-        };
-        delete updated.assignments[testId];
-        saveABTestConfig(updated);
-        setConfig(updated);
-    };
-
-    // ロック画面
-    if (adminState === 'locked') {
-        return (
-            <section className="section-grid">
-                <div className="card">
-                    <h2>🔐 管理者ログイン</h2>
-                    <p>管理者パスワードを入力してください。</p>
-                    <input
-                        type="password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        placeholder="パスワード"
-                        onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
-                    />
-                    {passwordError && <p style={{ color: 'red' }}>{passwordError}</p>}
-                    <button onClick={handleUnlock} style={{ marginTop: 12 }}>
-                        ログイン
-                    </button>
-                </div>
-            </section>
-        );
+  const adminFetch = useCallback(async (path: string, init: RequestInit = {}) => {
+    if (!token) {
+      throw new Error('ADMIN_TOKEN を入力してください。');
     }
+    const headers = new Headers(init.headers || {});
+    headers.set('x-admin-token', token);
+    return fetch(path, { ...init, headers });
+  }, [token]);
 
-    // ローディング
-    if (!config || !xpSummary) {
-        return (
-            <section className="section-grid">
-                <div className="card">
-                    <h2>管理者ダッシュボード</h2>
-                    <p>読み込み中...</p>
-                </div>
-            </section>
-        );
+  const loadStudents = useCallback(async () => {
+    setStudentsLoading(true);
+    setStudentsError('');
+    try {
+      const response = await adminFetch('/api/v1/admin/students');
+      if (!response.ok) {
+        throw new Error('生徒一覧の取得に失敗しました。');
+      }
+      const data = (await response.json()) as {
+        ok: boolean;
+        students?: StudentSummary[];
+      };
+      const list = data.students ?? [];
+      setStudents(list);
+      setSelectedUserId((prev) => prev || list[0]?.userId || '');
+    } catch (error) {
+      setStudentsError((error as Error).message);
+      setStudents([]);
+    } finally {
+      setStudentsLoading(false);
     }
+  }, [adminFetch]);
 
-    // A/Bテスト関連のイベントを抽出
-    const abtestEvents = counters.filter((c) => c.name.startsWith('abtest_'));
-    const otherEvents = counters.filter((c) => !c.name.startsWith('abtest_'));
+  const loadWords = useCallback(async (userId: string) => {
+    if (!userId) return;
+    setWordsLoading(true);
+    setWordsError('');
+    try {
+      const response = await adminFetch(`/api/v1/admin/students/${encodeURIComponent(userId)}/words?limit=500`);
+      if (!response.ok) {
+        throw new Error('履修語彙の取得に失敗しました。');
+      }
+      const data = (await response.json()) as {
+        ok: boolean;
+        words?: StudentWord[];
+      };
+      setWords(data.words ?? []);
+    } catch (error) {
+      setWordsError((error as Error).message);
+      setWords([]);
+    } finally {
+      setWordsLoading(false);
+    }
+  }, [adminFetch]);
 
-    return (
-        <section className="section-grid">
-            {/* ヘッダー */}
-            <div className="card">
-                <h2>📊 管理者ダッシュボード</h2>
-                <p>A/Bテスト管理とアナリティクス</p>
-            </div>
+  useEffect(() => {
+    const saved = localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) ?? '';
+    if (!saved) return;
+    setToken(saved);
+    setTokenInput(saved);
+  }, []);
 
-            {/* XP統計 */}
-            <div className="card">
-                <h3>⭐ ポイント統計</h3>
-                <div className="stats-grid">
-                    <div className="stat-item">
-                        <span className="stat-value">{xpSummary.xpTotal}</span>
-                        <span className="stat-label">累計ポイント</span>
-                    </div>
-                    <div className="stat-item">
-                        <span className="stat-value">Lv.{xpSummary.level}</span>
-                        <span className="stat-label">現在レベル</span>
-                    </div>
-                    <div className="stat-item">
-                        <span className="stat-value">{xpSummary.dailyEarned}</span>
-                        <span className="stat-label">本日獲得</span>
-                    </div>
+  useEffect(() => {
+    setAbConfig(loadABTestConfig());
+  }, []);
+
+  useEffect(() => {
+    if (!token) return;
+    void loadStudents();
+  }, [token, loadStudents]);
+
+  useEffect(() => {
+    if (!token || !selectedUserId) return;
+    void loadWords(selectedUserId);
+  }, [selectedUserId, token, loadWords]);
+
+  const selectedStudent = useMemo(
+    () => students.find((student) => student.userId === selectedUserId) ?? null,
+    [students, selectedUserId]
+  );
+
+  const testWords = useMemo<TestWord[]>(
+    () =>
+      words
+        .filter((word) => word.headword.trim() && word.meaningJa.trim())
+        .map((word) => ({
+          headwordNorm: word.headwordNorm,
+          headword: word.headword,
+          meaningJa: word.meaningJa
+        })),
+    [words]
+  );
+
+  const current = questions[index] ?? null;
+  const finished = questions.length > 0 && index >= questions.length;
+  const score = useMemo(() => answers.filter((answer) => answer.correct).length, [answers]);
+
+  const handleLogin = async () => {
+    const nextToken = tokenInput.trim();
+    if (!nextToken) {
+      setAuthStatus('ADMIN_TOKEN を入力してください。');
+      return;
+    }
+    setToken(nextToken);
+    localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, nextToken);
+    setAuthStatus('認証を確認しています…');
+    try {
+      const response = await fetch('/api/v1/admin/students', {
+        headers: { 'x-admin-token': nextToken }
+      });
+      if (!response.ok) throw new Error('ADMIN_TOKEN が正しくありません。');
+      setAuthStatus('認証できました。');
+    } catch (error) {
+      setAuthStatus((error as Error).message);
+      setToken('');
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
+    setToken('');
+    setTokenInput('');
+    setAuthStatus('');
+    setStudents([]);
+    setSelectedUserId('');
+    setWords([]);
+    setQuestions([]);
+    setIndex(0);
+    setAnswers([]);
+    setTyping('');
+  };
+
+  const updateAbConfig = (next: ABTestConfig) => {
+    saveABTestConfig(next);
+    setAbConfig(next);
+  };
+
+  const handleToggleTest = (testId: string) => {
+    const next = {
+      ...abConfig,
+      tests: abConfig.tests.map((test) =>
+        test.id === testId ? { ...test, active: !test.active } : test
+      )
+    };
+    updateAbConfig(next);
+  };
+
+  const handleResetAssignments = () => {
+    if (!confirm('A/Bテストの割り当てを全てリセットしますか？')) return;
+    resetAssignments();
+    setAbConfig(loadABTestConfig());
+  };
+
+  const handleDeleteTest = (testId: string) => {
+    if (!confirm(`テスト「${testId}」を削除しますか？`)) return;
+    const next = {
+      ...abConfig,
+      tests: abConfig.tests.filter((test) => test.id !== testId),
+      assignments: Object.fromEntries(
+        Object.entries(abConfig.assignments).filter(([key]) => key !== testId)
+      )
+    };
+    updateAbConfig(next);
+  };
+
+  const handleAddTest = () => {
+    if (!newTestId.trim() || !newTestName.trim()) return;
+    const nextTest: ABTest = {
+      id: newTestId.trim().toLowerCase().replace(/\s+/g, '_'),
+      name: newTestName.trim(),
+      description: newTestDesc.trim(),
+      variants: {
+        A: newVariantA.trim() || 'A案',
+        B: newVariantB.trim() || 'B案'
+      },
+      active: false,
+      createdAt: Date.now()
+    };
+    const next = {
+      ...abConfig,
+      tests: [...abConfig.tests, nextTest]
+    };
+    updateAbConfig(next);
+    setNewTestId('');
+    setNewTestName('');
+    setNewTestDesc('');
+    setNewVariantA('');
+    setNewVariantB('');
+  };
+
+  const handleGenerateTest = () => {
+    const built = buildQuestions(testWords, { count: questionCount, mode });
+    if (built.length === 0) {
+      setAuthStatus('テスト問題を作れる語がありません。');
+      return;
+    }
+    setQuestions(built);
+    setAnswers([]);
+    setIndex(0);
+    setTyping('');
+    setAuthStatus('');
+  };
+
+  const handleChoice = (answer: string) => {
+    if (!current) return;
+    setAnswers((prev) => [...prev, { questionId: current.id, answer, correct: answer === current.answer }]);
+    setIndex((prev) => prev + 1);
+  };
+
+  const handleTyping = () => {
+    if (!current) return;
+    const answer = typing.trim();
+    const correct = isTypingCorrect(answer, current.answer);
+    setAnswers((prev) => [...prev, { questionId: current.id, answer, correct }]);
+    setTyping('');
+    setIndex((prev) => prev + 1);
+  };
+
+  const handlePrint = () => {
+    if (!selectedStudent || questions.length === 0) return;
+    const html = buildPrintableTestHtml(`確認テスト: ${selectedStudent.email || selectedStudent.userId}`, questions, {
+      subtitle: `対象: ${selectedStudent.userId}`,
+      modeLabel: modeLabels[mode]
+    });
+    const popup = window.open('', '_blank', 'noopener,noreferrer');
+    if (!popup) {
+      setAuthStatus('ポップアップがブロックされました。');
+      return;
+    }
+    popup.document.open();
+    popup.document.write(html);
+    popup.document.close();
+    popup.focus();
+  };
+
+  return (
+    <section className="section-grid">
+      <div className="card">
+        <h2>🔐 管理者ログイン</h2>
+        <p className="notice">Cloudflare Worker の `ADMIN_TOKEN` で認証します。</p>
+        <input
+          type="password"
+          placeholder="ADMIN_TOKEN"
+          value={tokenInput}
+          onChange={(event) => setTokenInput(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              void handleLogin();
+            }
+          }}
+        />
+        <div className="scan-inline-actions" style={{ marginTop: 12 }}>
+          <button type="button" onClick={() => void handleLogin()}>認証する</button>
+          {token && (
+            <button type="button" className="secondary" onClick={handleLogout}>
+              ログアウト
+            </button>
+          )}
+        </div>
+        {authStatus && <p className="counter">{authStatus}</p>}
+      </div>
+
+      {token && (
+        <div className="card">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h2>👩‍🏫 生徒の学習状況</h2>
+            <button type="button" className="secondary" onClick={() => void loadStudents()} disabled={studentsLoading}>
+              更新
+            </button>
+          </div>
+          {studentsLoading && <p className="counter">読み込み中…</p>}
+          {studentsError && <p className="counter">{studentsError}</p>}
+          {!studentsLoading && students.length === 0 && <p>同期された生徒データがありません。</p>}
+          {students.length > 0 && (
+            <div className="word-grid">
+              {students.map((student) => (
+                <div key={student.userId} className="word-item">
+                  <div>
+                    <strong>{student.email || student.userId}</strong>
+                    <small className="candidate-meta">
+                      Lv.{student.level} / XP {student.xpTotal} / 履修 {student.learnedCount}語 / 登録 {student.cardCount}語
+                    </small>
+                    <small className="candidate-meta">
+                      最終同期: {toDateLabel(student.syncedAt)} / 最終ログイン: {toDateLabel(student.lastLoginAt)}
+                    </small>
+                  </div>
+                  <button
+                    type="button"
+                    className={student.userId === selectedUserId ? '' : 'secondary'}
+                    onClick={() => setSelectedUserId(student.userId)}
+                  >
+                    選択
+                  </button>
                 </div>
-                <details style={{ marginTop: 16 }}>
-                    <summary>レベル必要ポイント</summary>
-                    <table style={{ width: '100%', fontSize: '0.9rem', marginTop: 8 }}>
-                        <thead>
-                            <tr>
-                                <th>レベル</th>
-                                <th>累計必要pt</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {[2, 3, 5, 10, 15, 20].map((lv) => (
-                                <tr key={lv}>
-                                    <td>Lv.{lv}</td>
-                                    <td>{getXpRequiredForLevel(lv)} pt</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </details>
+              ))}
             </div>
+          )}
+        </div>
+      )}
 
-            {/* A/Bテスト管理 */}
-            <div className="card">
-                <h3>🧪 A/Bテスト管理</h3>
-                <button
-                    className="secondary"
-                    onClick={handleResetAssignments}
-                    style={{ marginBottom: 16 }}
-                >
-                    全割り当てリセット
-                </button>
+      {token && (
+        <div className="card">
+          <h2>🧪 A/Bテスト管理</h2>
+          <p className="counter">既存の実験管理機能をこのページに統合しています。</p>
+          <button type="button" className="secondary" onClick={handleResetAssignments}>
+            割り当てをリセット
+          </button>
 
-                {config.tests.length === 0 && <p>テストがありません。</p>}
+          <div className="word-grid" style={{ marginTop: 12 }}>
+            {abConfig.tests.map((test) => (
+              <div key={test.id} className="word-item" style={{ alignItems: 'flex-start' }}>
+                <div>
+                  <strong>{test.name}</strong>
+                  <small className="candidate-meta">ID: {test.id}</small>
+                  <small className="candidate-meta">{test.description}</small>
+                  <small className="candidate-meta">A: {test.variants.A} / B: {test.variants.B}</small>
+                  <small className="candidate-meta">
+                    状態: {test.active ? '有効' : '無効'}
+                    {abConfig.assignments[test.id]
+                      ? ` / 割り当て: ${abConfig.assignments[test.id].variant}`
+                      : ''}
+                  </small>
+                </div>
+                <div className="scan-inline-actions">
+                  <button type="button" onClick={() => handleToggleTest(test.id)}>
+                    {test.active ? '無効化' : '有効化'}
+                  </button>
+                  <button type="button" className="secondary" onClick={() => handleDeleteTest(test.id)}>
+                    削除
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
 
-                {config.tests.map((test) => (
-                    <div
-                        key={test.id}
-                        style={{
-                            border: '1px solid var(--border)',
-                            borderRadius: 8,
-                            padding: 12,
-                            marginBottom: 12,
-                            background: test.active ? 'rgba(255,200,100,0.1)' : 'transparent'
-                        }}
+          <details style={{ marginTop: 12 }}>
+            <summary>＋ 新規A/Bテストを追加</summary>
+            <label>テストID</label>
+            <input value={newTestId} onChange={(event) => setNewTestId(event.target.value)} placeholder="例: review_header" />
+            <label>テスト名</label>
+            <input value={newTestName} onChange={(event) => setNewTestName(event.target.value)} placeholder="例: 復習ヘッダー比較" />
+            <label>説明</label>
+            <input value={newTestDesc} onChange={(event) => setNewTestDesc(event.target.value)} placeholder="例: タイトル表現を比較" />
+            <div className="scan-inline-actions">
+              <input value={newVariantA} onChange={(event) => setNewVariantA(event.target.value)} placeholder="A案" />
+              <input value={newVariantB} onChange={(event) => setNewVariantB(event.target.value)} placeholder="B案" />
+            </div>
+            <button type="button" style={{ marginTop: 8 }} onClick={handleAddTest}>追加</button>
+          </details>
+        </div>
+      )}
+
+      {token && selectedStudent && (
+        <div className="card">
+          <h2>🧪 テスト作成</h2>
+          <p className="counter">
+            対象: {selectedStudent.email || selectedStudent.userId} / 利用可能語: {testWords.length}
+          </p>
+          {wordsLoading && <p className="counter">語彙データを読み込み中…</p>}
+          {wordsError && <p className="counter">{wordsError}</p>}
+
+          <label>テスト方式</label>
+          <select value={mode} onChange={(event) => setMode(event.target.value as TestMode)}>
+            <option value="mixed">ミックス</option>
+            <option value="choice">4択（英語→日本語）</option>
+            <option value="reverse">逆4択（日本語→英語）</option>
+            <option value="typing">入力（日本語→英語）</option>
+          </select>
+
+          <label style={{ marginTop: 12 }}>問題数</label>
+          <div className="scan-inline-actions">
+            {[5, 10, 20].map((size) => (
+              <button
+                key={size}
+                type="button"
+                className={questionCount === size ? '' : 'secondary'}
+                onClick={() => setQuestionCount(Math.min(size, Math.max(1, testWords.length)))}
+              >
+                {size}問
+              </button>
+            ))}
+          </div>
+
+          <div className="scan-inline-actions" style={{ marginTop: 12 }}>
+            <button type="button" onClick={handleGenerateTest} disabled={testWords.length === 0}>
+              オンラインテストを作成
+            </button>
+            <button type="button" className="secondary" onClick={handlePrint} disabled={questions.length === 0}>
+              印刷シート（PDF）
+            </button>
+          </div>
+        </div>
+      )}
+
+      {questions.length > 0 && (
+        <div className="card">
+          <h2>📝 オンラインテスト</h2>
+          {!finished && current && (
+            <>
+              <p className="badge">{index + 1}/{questions.length}</p>
+              <p style={{ fontSize: '1.2rem', fontWeight: 700 }}>{current.prompt}</p>
+
+              {(current.type === 'choice' || current.type === 'reverse') && (
+                <div className="word-grid">
+                  {current.choices.map((choice) => (
+                    <button
+                      type="button"
+                      key={choice}
+                      className="secondary"
+                      onClick={() => handleChoice(choice)}
                     >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div>
-                                <strong>{test.name}</strong>
-                                <span
-                                    style={{
-                                        marginLeft: 8,
-                                        padding: '2px 8px',
-                                        borderRadius: 4,
-                                        fontSize: '0.75rem',
-                                        background: test.active ? '#4CAF50' : '#888',
-                                        color: 'white'
-                                    }}
-                                >
-                                    {test.active ? '有効' : '無効'}
-                                </span>
-                            </div>
-                            <div>
-                                <button
-                                    className={test.active ? 'secondary' : ''}
-                                    onClick={() => handleToggleTest(test.id)}
-                                    style={{ marginRight: 8 }}
-                                >
-                                    {test.active ? '無効化' : '有効化'}
-                                </button>
-                                <button
-                                    className="secondary"
-                                    onClick={() => handleDeleteTest(test.id)}
-                                >
-                                    削除
-                                </button>
-                            </div>
-                        </div>
-                        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: '8px 0' }}>
-                            {test.description}
-                        </p>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                            <div style={{ padding: 8, background: 'rgba(0,100,255,0.1)', borderRadius: 4 }}>
-                                <small>A: {test.variants.A}</small>
-                            </div>
-                            <div style={{ padding: 8, background: 'rgba(255,100,0,0.1)', borderRadius: 4 }}>
-                                <small>B: {test.variants.B}</small>
-                            </div>
-                        </div>
-                        {/* 割り当て状況 */}
-                        {config.assignments[test.id] && (
-                            <p style={{ fontSize: '0.8rem', marginTop: 8 }}>
-                                現在の割り当て: <strong>{config.assignments[test.id].variant}</strong>
-                            </p>
-                        )}
-                    </div>
-                ))}
-
-                {/* 新規テスト追加 */}
-                <details style={{ marginTop: 16 }}>
-                    <summary>＋ 新規テストを追加</summary>
-                    <div style={{ marginTop: 12 }}>
-                        <label>テストID（英数字）</label>
-                        <input
-                            type="text"
-                            value={newTestId}
-                            onChange={(e) => setNewTestId(e.target.value)}
-                            placeholder="例: button_color"
-                        />
-                        <label>テスト名</label>
-                        <input
-                            type="text"
-                            value={newTestName}
-                            onChange={(e) => setNewTestName(e.target.value)}
-                            placeholder="例: ボタンカラーテスト"
-                        />
-                        <label>説明</label>
-                        <input
-                            type="text"
-                            value={newTestDesc}
-                            onChange={(e) => setNewTestDesc(e.target.value)}
-                            placeholder="例: 青ボタン vs ピンクボタン"
-                        />
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                            <div>
-                                <label>バリアントA</label>
-                                <input
-                                    type="text"
-                                    value={newVariantA}
-                                    onChange={(e) => setNewVariantA(e.target.value)}
-                                    placeholder="A の説明"
-                                />
-                            </div>
-                            <div>
-                                <label>バリアントB</label>
-                                <input
-                                    type="text"
-                                    value={newVariantB}
-                                    onChange={(e) => setNewVariantB(e.target.value)}
-                                    placeholder="B の説明"
-                                />
-                            </div>
-                        </div>
-                        <button onClick={handleAddTest} style={{ marginTop: 12 }}>
-                            テストを追加
-                        </button>
-                    </div>
-                </details>
-            </div>
-
-            {/* A/Bテスト結果 */}
-            {abtestEvents.length > 0 && (
-                <div className="card">
-                    <h3>📈 A/Bテスト結果</h3>
-                    <table style={{ width: '100%', fontSize: '0.85rem' }}>
-                        <thead>
-                            <tr>
-                                <th style={{ textAlign: 'left' }}>イベント</th>
-                                <th style={{ textAlign: 'right' }}>カウント</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {abtestEvents.map((event) => (
-                                <tr key={event.name}>
-                                    <td>{event.name.replace('abtest_', '')}</td>
-                                    <td style={{ textAlign: 'right' }}>{event.count}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                      {choice}
+                    </button>
+                  ))}
                 </div>
-            )}
+              )}
 
-            {/* イベントカウンター */}
-            <div className="card">
-                <h3>📋 イベントログ</h3>
-                {otherEvents.length === 0 && <p>まだイベントがありません。</p>}
-                {otherEvents.length > 0 && (
-                    <table style={{ width: '100%', fontSize: '0.85rem' }}>
-                        <thead>
-                            <tr>
-                                <th style={{ textAlign: 'left' }}>イベント</th>
-                                <th style={{ textAlign: 'right' }}>カウント</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {otherEvents.map((event) => (
-                                <tr key={event.name}>
-                                    <td>{event.name}</td>
-                                    <td style={{ textAlign: 'right' }}>{event.count}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                )}
-            </div>
+              {current.type === 'typing' && (
+                <>
+                  <input
+                    type="text"
+                    value={typing}
+                    placeholder="英単語を入力"
+                    onChange={(event) => setTyping(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        handleTyping();
+                      }
+                    }}
+                  />
+                  <button type="button" style={{ marginTop: 10 }} onClick={handleTyping} disabled={!typing.trim()}>
+                    回答
+                  </button>
+                </>
+              )}
+            </>
+          )}
 
-            {/* OCR設定（管理者専用） */}
-            <div className="card">
-                <h3>🔧 OCR設定（管理者専用）</h3>
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 12 }}>
-                    ユーザーには見えない高度な設定です
-                </p>
-
-                <label className="candidate-toggle">
-                    <input
-                        type="checkbox"
-                        checked={settings.ocrDebug}
-                        onChange={(e) => onChangeSettings({ ...settings, ocrDebug: e.target.checked })}
-                    />
-                    <span>OCRデバッグを表示する</span>
-                </label>
-
-                <label style={{ marginTop: 12, display: 'block' }}>既定PSM</label>
-                <select
-                    value={settings.defaultPsm}
-                    onChange={(e) => onChangeSettings({ ...settings, defaultPsm: e.target.value as OcrPsm })}
-                    style={{ width: '100%' }}
+          {finished && (
+            <>
+              <p className="badge">正解 {score} / {questions.length}</p>
+              <div className="scan-inline-actions">
+                <button type="button" onClick={handleGenerateTest}>同条件で再作成</button>
+                <button type="button" className="secondary" onClick={handlePrint}>印刷シート（PDF）</button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => {
+                    setQuestions([]);
+                    setAnswers([]);
+                    setIndex(0);
+                    setTyping('');
+                  }}
                 >
-                    <option value="6">6: 本文ブロック向け</option>
-                    <option value="11">11: ばらけた文字向け</option>
-                    <option value="7">7: 1行向け</option>
-                </select>
-
-                <details style={{ marginTop: 16 }}>
-                    <summary>前処理の既定値</summary>
-                    <div style={{ marginTop: 8 }}>
-                        <div className="scan-option-grid">
-                            <label className="candidate-toggle">
-                                <input
-                                    type="checkbox"
-                                    checked={settings.defaultPreprocess.grayscale}
-                                    onChange={(e) => onChangeSettings({
-                                        ...settings,
-                                        defaultPreprocess: { ...settings.defaultPreprocess, grayscale: e.target.checked }
-                                    })}
-                                />
-                                <span>グレースケール</span>
-                            </label>
-                            <label className="candidate-toggle">
-                                <input
-                                    type="checkbox"
-                                    checked={settings.defaultPreprocess.threshold}
-                                    onChange={(e) => onChangeSettings({
-                                        ...settings,
-                                        defaultPreprocess: { ...settings.defaultPreprocess, threshold: e.target.checked }
-                                    })}
-                                />
-                                <span>二値化</span>
-                            </label>
-                            <label className="candidate-toggle">
-                                <input
-                                    type="checkbox"
-                                    checked={settings.defaultPreprocess.invert}
-                                    onChange={(e) => onChangeSettings({
-                                        ...settings,
-                                        defaultPreprocess: { ...settings.defaultPreprocess, invert: e.target.checked }
-                                    })}
-                                />
-                                <span>白黒反転</span>
-                            </label>
-                        </div>
-
-                        <label style={{ marginTop: 8 }}>Threshold: {Math.round(settings.defaultPreprocess.thresholdValue)}</label>
-                        <input
-                            type="range"
-                            min={0}
-                            max={255}
-                            value={settings.defaultPreprocess.thresholdValue}
-                            onChange={(e) => onChangeSettings({
-                                ...settings,
-                                defaultPreprocess: { ...settings.defaultPreprocess, thresholdValue: Number(e.target.value) }
-                            })}
-                        />
-
-                        <button
-                            type="button"
-                            className="secondary"
-                            onClick={() => onChangeSettings(defaultSettings)}
-                            style={{ marginTop: 12 }}
-                        >
-                            初期値に戻す
-                        </button>
-                    </div>
-                </details>
-            </div>
-        </section>
-    );
+                  閉じる
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </section>
+  );
 }

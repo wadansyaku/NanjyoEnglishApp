@@ -311,6 +311,12 @@ nav.pill-group {
   gap: 10px;
 }
 
+.pill-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .pill {
   display: inline-flex;
   align-items: center;

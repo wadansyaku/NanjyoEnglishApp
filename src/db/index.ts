@@ -58,6 +58,12 @@ export type DeckDueSummary = {
   totalCards: number;
 };
 
+export type DeckWord = {
+  headwordNorm: string;
+  headword: string;
+  meaningJa: string;
+};
+
 const XP_DAILY_LIMIT = 300;
 
 /**
@@ -208,6 +214,28 @@ export const listDecks = async () => db.decks.orderBy('createdAt').toArray();
 
 export const getDeck = async (deckId: string) => db.decks.get(deckId);
 
+export const getDeckWords = async (deckId: string): Promise<DeckWord[]> => {
+  const deck = await db.decks.get(deckId);
+  if (!deck) return [];
+  const lexemes = await db.lexemeCache.bulkGet(deck.headwordNorms);
+  const lexemeMap = new Map<string, LexemeCache>();
+  for (const lexeme of lexemes) {
+    if (!lexeme) continue;
+    lexemeMap.set(lexeme.headwordNorm, lexeme);
+  }
+  return deck.headwordNorms
+    .map((norm) => {
+      const lexeme = lexemeMap.get(norm);
+      if (!lexeme) return null;
+      return {
+        headwordNorm: lexeme.headwordNorm,
+        headword: lexeme.headword,
+        meaningJa: lexeme.meaningJa
+      };
+    })
+    .filter((item): item is DeckWord => Boolean(item));
+};
+
 export const addLexemeToDeck = async (
   deckId: string,
   input: { headword: string; meaningJa: string }
@@ -242,11 +270,26 @@ export const addLexemeToDeck = async (
 
 export const getDueCard = async (deckId: string): Promise<DueCard | null> => {
   const now = Date.now();
-  const srs = await db.srs
+  const dueCandidates = await db.srs
     .where('[deckId+dueAt]')
     .between([deckId, 0], [deckId, now])
-    .first();
-  if (!srs) return null;
+    .limit(24)
+    .toArray();
+
+  if (dueCandidates.length === 0) return null;
+
+  // Avoid alphabetical bias when many cards share the same dueAt.
+  const score = (state: SrsState) => {
+    const base = state.reps * 100 + state.lapses * 40;
+    const jitter = [...state.headwordNorm].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % 31;
+    return base + jitter;
+  };
+  dueCandidates.sort((a, b) => {
+    if (a.dueAt !== b.dueAt) return a.dueAt - b.dueAt;
+    return score(a) - score(b);
+  });
+
+  const srs = dueCandidates[0];
   const lexeme = await db.lexemeCache.get(srs.headwordNorm);
   if (!lexeme) return null;
   return { srs, lexeme };
@@ -427,4 +470,63 @@ export const getQuickReviewCards = async (limit = 5): Promise<DueCard[]> => {
 export const getQuickReviewCount = async (): Promise<number> => {
   const now = Date.now();
   return db.srs.where('dueAt').below(now).count();
+};
+
+export type SyncCardSnapshot = {
+  id: string;
+  term: string;
+  meaning: string;
+  updatedAt: number;
+};
+
+export type SyncDeckSnapshot = {
+  id: string;
+  name: string;
+  updatedAt: number;
+  cards: SyncCardSnapshot[];
+};
+
+export type SyncSnapshot = {
+  decks: SyncDeckSnapshot[];
+  progress: {
+    xpTotal: number;
+    level: number;
+    streakDays: number;
+  };
+};
+
+export const buildSyncSnapshot = async (): Promise<SyncSnapshot> => {
+  const [decks, xpSummary] = await Promise.all([db.decks.toArray(), getXpSummary()]);
+  const snapshots: SyncDeckSnapshot[] = [];
+
+  for (const deck of decks) {
+    const lexemes = await db.lexemeCache.bulkGet(deck.headwordNorms);
+    const cards: SyncCardSnapshot[] = [];
+    let latest = deck.createdAt;
+    for (const lexeme of lexemes) {
+      if (!lexeme) continue;
+      cards.push({
+        id: `${deck.deckId}:${lexeme.headwordNorm}`,
+        term: lexeme.headword,
+        meaning: lexeme.meaningJa,
+        updatedAt: lexeme.updatedAt
+      });
+      if (lexeme.updatedAt > latest) latest = lexeme.updatedAt;
+    }
+    snapshots.push({
+      id: deck.deckId,
+      name: deck.title,
+      updatedAt: latest,
+      cards
+    });
+  }
+
+  return {
+    decks: snapshots,
+    progress: {
+      xpTotal: xpSummary.xpTotal,
+      level: xpSummary.level,
+      streakDays: 0
+    }
+  };
 };

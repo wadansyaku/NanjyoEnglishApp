@@ -5,6 +5,7 @@ import ReviewHomePage from './pages/ReviewHomePage';
 import CharacterPage from './pages/CharacterPage';
 import SettingsPage from './pages/SettingsPage';
 import AdminPage from './pages/AdminPage';
+import TestPage from './pages/TestPage';
 import AuthPage from './pages/AuthPage';
 import AuthVerifyPage from './pages/AuthVerifyPage';
 import { Link, usePath } from './lib/router';
@@ -151,6 +152,10 @@ export default function App() {
       const deckId = normalizedPath.replace('/review/', '');
       return <ReviewPage deckId={deckId} showToast={showToast} />;
     }
+    if (normalizedPath.startsWith('/test/')) {
+      const deckId = normalizedPath.replace('/test/', '');
+      return <TestPage deckId={deckId} />;
+    }
     if (normalizedPath === '/review') {
       return <ReviewHomePage />;
     }
@@ -173,7 +178,10 @@ export default function App() {
   }, [normalizedPath, navigate, settings, showToast, handleChangeSettings]);
 
   const isScanActive = normalizedPath === '/scan';
-  const isReviewActive = normalizedPath === '/review' || normalizedPath.startsWith('/review/');
+  const isReviewActive =
+    normalizedPath === '/review' ||
+    normalizedPath.startsWith('/review/') ||
+    normalizedPath.startsWith('/test/');
   const isCharacterActive = normalizedPath === '/character';
 
   return (
