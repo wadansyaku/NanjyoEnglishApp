@@ -126,6 +126,45 @@ const eventLabelMap: Record<string, { label: string; icon: string }> = {
   review_done: { label: '復習カードに回答', icon: '⭐' }
 };
 
+const getGardenPhase = (clearedCount: number, totalTasks: number) => {
+  if (totalTasks <= 0 || clearedCount <= 0) {
+    return {
+      label: 'たねまき',
+      description: 'まずは最初のことばの芽を植えよう。'
+    };
+  }
+
+  const ratio = clearedCount / totalTasks;
+  if (ratio >= 1) {
+    return {
+      label: '収穫',
+      description: '今日のお庭は育ちきったよ。収穫ノートで仕上げよう。'
+    };
+  }
+  if (ratio >= 0.66) {
+    return {
+      label: '仕上げの手入れ',
+      description: 'あと少しで収穫。最後までお世話しよう。'
+    };
+  }
+  if (ratio >= 0.33) {
+    return {
+      label: '水やり中',
+      description: '芽が育ってきたよ。このまま続けよう。'
+    };
+  }
+  return {
+    label: '芽が出た',
+    description: 'いいスタート。毎日少しずつ育てよう。'
+  };
+};
+
+const getGardenTaskLabel = (taskType: string) => {
+  if (taskType === 'proofread') return '水やりチェック';
+  if (taskType === 'propose') return '植えかえ提案';
+  return 'お世話タスク';
+};
+
 export default function CharacterPage() {
   const { navigate } = usePath();
   const [summary, setSummary] = useState<XpSummary | null>(null);
@@ -199,7 +238,7 @@ export default function CharacterPage() {
         }
       });
       if (!response.ok) {
-        throw new Error('冒険データの取得に失敗しました。');
+        throw new Error('お庭データの取得に失敗しました。');
       }
 
       const data = (await response.json()) as {
@@ -228,7 +267,7 @@ export default function CharacterPage() {
       setProofreadRemaining(Math.max(0, Number(data.usage?.proofreadRemainingToday ?? 0)));
       setAdventureStatus('');
     } catch (error) {
-      setAdventureStatus((error as Error).message || '冒険データの読み込みに失敗しました。');
+      setAdventureStatus((error as Error).message || 'お庭データの読み込みに失敗しました。');
       setAdventure(null);
       setAdventureTasks([]);
     } finally {
@@ -276,7 +315,7 @@ export default function CharacterPage() {
     if (words.length === 0) return null;
     return createOrUpdateSystemDeck({
       sourceId: input.sourceId,
-      title: `${adventure?.title ?? '今日の冒険'}報酬`,
+      title: `${adventure?.title ?? '今日のお庭'} 収穫ノート`,
       origin: 'dungeon',
       words
     });
@@ -313,18 +352,18 @@ export default function CharacterPage() {
       if (data.unlockedDeck && data.unlockedDeck.headwordNorms.length > 0) {
         const deckId = await unlockDungeonDeck(data.unlockedDeck);
         if (deckId) {
-          setAdventureStatus('報酬デッキが解放されました。すぐに復習できます。');
+          setAdventureStatus('収穫ノートが解放されました。すぐに復習できます。');
           navigate(`/review/${deckId}`);
         } else {
-          setAdventureStatus('タスクを達成しました。報酬デッキの準備中です。');
+          setAdventureStatus('お世話完了。収穫ノートを準備しています。');
         }
       } else {
-        setAdventureStatus('タスクを完了しました。');
+        setAdventureStatus('お世話を記録しました。');
       }
 
       await loadAdventure();
     } catch (error) {
-      setAdventureStatus((error as Error).message || 'タスク完了に失敗しました。');
+      setAdventureStatus((error as Error).message || 'お世話の完了に失敗しました。');
     } finally {
       setCompletingTaskId('');
     }
@@ -339,6 +378,7 @@ export default function CharacterPage() {
 
   // グラフ用: 最大値（最低50pt）
   const maxVal = Math.max(...history.map(h => h.earned), 50);
+  const gardenPhase = adventure ? getGardenPhase(adventure.clearedCount, adventure.totalTasks) : null;
 
   return (
     <section className="section-grid">
@@ -589,20 +629,27 @@ export default function CharacterPage() {
       </details>
 
       <details className="card">
-        <summary style={{ cursor: 'pointer', fontWeight: 600 }}>🏰 今日の冒険</summary>
-        <p className="notice" style={{ marginTop: 12 }}>タスクを進めると、冒険デッキが解放されます。</p>
+        <summary style={{ cursor: 'pointer', fontWeight: 600 }}>🌿 今日のお庭</summary>
+        <p className="notice" style={{ marginTop: 12 }}>お世話を進めると、収穫ノートが解放されます。</p>
         {adventureLoading && <p className="counter">読み込み中…</p>}
         {!adventureLoading && !adventure && (
-          <p className="counter">ぼうけんデータが取得できませんでした。</p>
+          <p className="counter">お庭データが取得できませんでした。</p>
         )}
         {adventure && (
           <>
             <p className="badge">
-              進み: {adventure.clearedCount}/{adventure.totalTasks} ・ 残りポイント: {proofreadRemaining}
+              育ち: {adventure.clearedCount}/{adventure.totalTasks} ・ のこりお世話回数: {proofreadRemaining}
             </p>
+            {gardenPhase && (
+              <p className="counter">
+                フェーズ: {gardenPhase.label}
+                {' ・ '}
+                {gardenPhase.description}
+              </p>
+            )}
             <div className="xp-bar-container" style={{ marginTop: 8 }}>
               <div className="xp-bar-label">
-                <span>進行率</span>
+                <span>栽培率</span>
                 <span>
                   {adventure.totalTasks > 0
                     ? `${Math.round((adventure.clearedCount / adventure.totalTasks) * 100)}%`
@@ -619,7 +666,7 @@ export default function CharacterPage() {
                 />
               </div>
               <small className="candidate-meta">
-                あと {Math.max(0, adventure.totalTasks - adventure.clearedCount)} タスク
+                あと {Math.max(0, adventure.totalTasks - adventure.clearedCount)} 件で収穫
               </small>
             </div>
             <div className="word-grid">
@@ -628,7 +675,7 @@ export default function CharacterPage() {
                   <div>
                     <strong>{task.headwordNorm || 'task'}</strong>
                     <small className="candidate-meta">
-                      {task.type === 'proofread' ? 'チェック' : 'ていあん'}ミッション ・ {task.status === 'done' ? '完了' : '未完了'}
+                      {getGardenTaskLabel(task.type)} ・ {task.status === 'done' ? '完了' : '未完了'}
                     </small>
                   </div>
                   <button
@@ -641,13 +688,13 @@ export default function CharacterPage() {
                       ? '完了'
                       : completingTaskId === task.taskId
                         ? '処理中…'
-                        : '進める'}
+                        : 'お世話する'}
                   </button>
                 </div>
               ))}
             </div>
             {adventure.unlockReady && (
-              <p className="counter">今日の冒険はクリア済みです。復習画面でデッキを確認できます。</p>
+              <p className="counter">今日のお庭は収穫済みです。復習画面でノートを確認できます。</p>
             )}
           </>
         )}

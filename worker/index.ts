@@ -4314,8 +4314,8 @@ const ensureDailyDungeon = async (env: Env) => {
       ),
       dateKey,
       dungeonId,
-      '今日の冒険',
-      '校正タスクをこなして単語デッキを解放しよう'
+      '今日のお庭',
+      'ことばの芽をお世話して、収穫ノートを解放しよう'
     )
   );
 
@@ -4619,7 +4619,7 @@ const handleCommunityReview = async (
   if (body.action === 'approve') {
     const allowed = await consumeProofreadToken(env, auth.userId);
     if (!allowed) {
-      return tooManyRequests('今日の校正トークンを使い切りました。明日また挑戦してね。');
+      return tooManyRequests('今日のお世話回数を使い切りました。明日また育てよう。');
     }
   }
 
@@ -4971,7 +4971,7 @@ const handleCommunityTasks = async (env: Env, auth: AuthContext) => {
     dungeon: {
       dungeonId,
       date: usage.date,
-      title: dungeonRow.results?.[0]?.title ?? '今日の冒険',
+      title: dungeonRow.results?.[0]?.title ?? '今日のお庭',
       description: dungeonRow.results?.[0]?.description ?? '',
       totalTasks,
       clearedCount: progress.cleared_count,
@@ -4995,7 +4995,7 @@ const handleCommunityCompleteTask = async (
 ) => {
   const usage = await getUsageSnapshot(env, auth.userId);
   if (usage.proofreadRemainingToday <= 0) {
-    return tooManyRequests('今日の校正トークンを使い切りました。明日また挑戦してね。');
+    return tooManyRequests('今日のお世話回数を使い切りました。明日また育てよう。');
   }
 
   const row = await dbAll<{
@@ -5025,7 +5025,7 @@ const handleCommunityCompleteTask = async (
 
   const consumed = await consumeProofreadToken(env, auth.userId);
   if (!consumed) {
-    return tooManyRequests('今日の校正トークンを使い切りました。明日また挑戦してね。');
+    return tooManyRequests('今日のお世話回数を使い切りました。明日また育てよう。');
   }
 
   await dbRun(

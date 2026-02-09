@@ -180,7 +180,7 @@ npx wrangler secret put RESEND_FROM_EMAIL
 - 「学習済みを表示」トグルで再表示可能
 - 画像/OCR本文はサーバへ送信しない（送信するのは `headword` のみ）
 
-## Core Wordbank / Community / 冒険
+## Core Wordbank / Community / お庭の栽培
 
 - Core Wordbank:
   - `core_words` / `core_decks` / `core_deck_words` で配信単語帳を管理
@@ -193,10 +193,10 @@ npx wrangler secret put RESEND_FROM_EMAIL
   - Changesetベースの提案→校正→マージ
   - 確定語彙は `ugc_lexeme_canonical`
   - lookup優先順は `community -> core -> legacy`
-- 冒険（ダンジョン）:
-  - `/character` から「今日の冒険」を実行
-  - 校正タスク完了で報酬デッキを解放して学習できる
-  - 校正トークンは `minutesToday` から日次計算
+- お庭の栽培:
+  - `/character` から「今日のお庭」を進める
+  - お世話タスク完了で収穫ノートを解放して学習できる
+  - お世話回数は `minutesToday` から日次計算
 
 ### OCR改善（エンジン変更なし）
 
@@ -396,11 +396,11 @@ npx wrangler secret put RESEND_FROM_EMAIL
 
 ### 26) `GET /api/v1/community/tasks`
 
-- 今日の冒険タスクと利用可能トークンを取得
+- 今日のお庭タスクと利用可能なお世話回数を取得
 
 ### 27) `POST /api/v1/community/tasks/:taskId/complete`
 
-- タスク完了処理。条件達成で報酬デッキ（headword集合）を返却
+- タスク完了処理。条件達成で収穫ノート（headword集合）を返却
 
 ### 28) `POST /api/v1/usage/report`
 

@@ -12,12 +12,12 @@
    - 学習済み語（Mastered）を候補からデフォルト非表示
 3. 学習導線の拡張
    - `/review` から Core Wordbank デッキを取り込み可能
-   - `/character` に「今日の冒険」導線を追加
-   - 冒険タスク完了で報酬デッキをローカルSRSに解放
+   - `/character` に「今日のお庭」導線を追加
+   - お世話タスク完了で収穫ノートをローカルSRSに解放
 4. バックエンド基盤の拡張
    - `core_*` / `ugc_*` / `game_*` / `user_roles` / `user_profiles` を追加
    - `lexemes/lookup` の優先順を `community -> core -> legacy` へ統合
-   - usage日次上限+校正トークン（minutesToday連動）を実装
+   - usage日次上限+お世話回数（minutesToday連動）を実装
 5. 本番向け調整
    - auth/syncスキーマとWorker実装の不一致を解消
    - emailユニーク制約とmagic-link token schemaを統一
