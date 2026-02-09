@@ -1101,11 +1101,24 @@ const isValidEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
 /**
  * Resend APIを使ってマジックリンクメールを送信
  */
-const sendMagicLinkEmail = async (env: Env, to: string, magicLink: string): Promise<{ success: boolean; error?: string }> => {
+type EmailSendResult =
+  | { success: true }
+  | {
+    success: false;
+    code: 'EMAIL_PROVIDER_NOT_CONFIGURED' | 'EMAIL_PROVIDER_REJECTED' | 'EMAIL_NETWORK_ERROR';
+    error?: string;
+    providerMessage?: string;
+  };
+
+const sendMagicLinkEmail = async (env: Env, to: string, magicLink: string): Promise<EmailSendResult> => {
   const apiKey = env.RESEND_API_KEY;
   if (!apiKey) {
     console.error('RESEND_API_KEY is not configured');
-    return { success: false, error: 'Email service not configured' };
+    return {
+      success: false,
+      code: 'EMAIL_PROVIDER_NOT_CONFIGURED',
+      error: 'RESEND_API_KEY is not configured'
+    };
   }
 
   const fromEmail = env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
@@ -1152,15 +1165,31 @@ const sendMagicLinkEmail = async (env: Env, to: string, magicLink: string): Prom
     });
 
     if (!response.ok) {
-      const errorData = await response.text();
-      console.error('Resend API error:', errorData);
-      return { success: false, error: `Email send failed: ${response.status}` };
+      const errorText = await response.text();
+      let providerMessage = '';
+      try {
+        const parsed = JSON.parse(errorText) as { message?: string; error?: string };
+        providerMessage = (parsed.message ?? parsed.error ?? '').slice(0, 300);
+      } catch {
+        providerMessage = errorText.slice(0, 300);
+      }
+      console.error('Resend API error:', response.status, providerMessage);
+      return {
+        success: false,
+        code: 'EMAIL_PROVIDER_REJECTED',
+        error: `Email send failed: ${response.status}`,
+        providerMessage
+      };
     }
 
     return { success: true };
   } catch (error) {
     console.error('Email send error:', error);
-    return { success: false, error: 'Network error while sending email' };
+    return {
+      success: false,
+      code: 'EMAIL_NETWORK_ERROR',
+      error: 'Network error while sending email'
+    };
   }
 };
 
@@ -1587,7 +1616,25 @@ const handleRequestMagicLink = async (request: Request, env: Env) => {
         _dev: { magicLink }
       });
     }
-    return jsonResponse({ ok: false, message: 'メール送信に失敗しました。しばらくしてからお試しください。' }, { status: 500 });
+    if (emailResult.code === 'EMAIL_PROVIDER_NOT_CONFIGURED') {
+      return jsonResponse({
+        ok: false,
+        code: 'EMAIL_PROVIDER_NOT_CONFIGURED',
+        message: 'メール送信設定が未完了です。管理者に連絡してください。'
+      }, { status: 503 });
+    }
+    if (emailResult.code === 'EMAIL_PROVIDER_REJECTED') {
+      return jsonResponse({
+        ok: false,
+        code: 'EMAIL_PROVIDER_REJECTED',
+        message: 'メール送信設定を確認中です。時間をおいて再試行してください。'
+      }, { status: 502 });
+    }
+    return jsonResponse({
+      ok: false,
+      code: 'EMAIL_NETWORK_ERROR',
+      message: 'メール送信サービスに接続できませんでした。しばらくしてからお試しください。'
+    }, { status: 502 });
   }
 
   const response: Record<string, unknown> = {
@@ -1952,7 +1999,25 @@ const handleLinkAccount = async (request: Request, env: Env, auth: AuthContext) 
         _dev: { magicLink }
       });
     }
-    return jsonResponse({ ok: false, message: 'メール送信に失敗しました。' }, { status: 500 });
+    if (emailResult.code === 'EMAIL_PROVIDER_NOT_CONFIGURED') {
+      return jsonResponse({
+        ok: false,
+        code: 'EMAIL_PROVIDER_NOT_CONFIGURED',
+        message: 'メール送信設定が未完了です。管理者に連絡してください。'
+      }, { status: 503 });
+    }
+    if (emailResult.code === 'EMAIL_PROVIDER_REJECTED') {
+      return jsonResponse({
+        ok: false,
+        code: 'EMAIL_PROVIDER_REJECTED',
+        message: 'メール送信設定を確認中です。時間をおいて再試行してください。'
+      }, { status: 502 });
+    }
+    return jsonResponse({
+      ok: false,
+      code: 'EMAIL_NETWORK_ERROR',
+      message: 'メール送信サービスに接続できませんでした。しばらくしてからお試しください。'
+    }, { status: 502 });
   }
 
   const response: Record<string, unknown> = {
@@ -3185,9 +3250,9 @@ const handleWordbankCurriculum = async (env: Env) => {
     buildStep({
       stepId: 'accelerated_jhs2_bridge',
       title: '中2（速習）',
-      description: '中2は中3の導入と一緒に進めます。',
+      description: '中2で覚える単語をこのステップで進めます。',
       deckIds: ['default_g8_jhs2', sliceUntil('default_g9_jhs3', defaultG9SplitA)],
-      note: '中2の語数が少ないためです。',
+      note: '中2は語数に合わせて短めのステップです。',
       recommendedChunk: 10
     }),
     buildStep({
@@ -3246,9 +3311,9 @@ const handleWordbankCurriculum = async (env: Env) => {
     buildStep({
       stepId: 'standard_jhs2_bridge',
       title: '中2（標準）',
-      description: '中2は中3の導入と一緒に進めます。',
+      description: '中2で覚える単語をこのステップで進めます。',
       deckIds: ['standard_g8_jhs2', sliceUntil('standard_g9_jhs3', standardG9Split)],
-      note: '中2の語数が少ないためです。',
+      note: '中2は語数に合わせて短めのステップです。',
       recommendedChunk: 10
     }),
     buildStep({
@@ -4545,7 +4610,15 @@ export default {
     }
 
     if (url.pathname === '/api/healthz') {
-      return jsonResponse({ ok: true });
+      return jsonResponse({
+        ok: true,
+        mail: {
+          provider: 'resend',
+          configured: Boolean(env.RESEND_API_KEY?.trim()),
+          fromConfigured: Boolean(env.RESEND_FROM_EMAIL?.trim()),
+          devMagicLinkFallback: shouldExposeDevMagicLink(env)
+        }
+      });
     }
 
     if (url.pathname === '/api/v1/bootstrap') {

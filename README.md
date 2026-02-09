@@ -136,10 +136,12 @@ npx wrangler secret put WORKERS_AI_API_TOKEN
 - 送信元メールは `RESEND_FROM_EMAIL` を `login@ai-yu-me.com` などに設定
 
 ```bash
+npx wrangler secret put RESEND_API_KEY
 npx wrangler secret put RESEND_FROM_EMAIL
 ```
 
 Resend側で `ai-yu-me.com` ドメイン認証（SPF/DKIM）を済ませてから運用してください。
+`/api/healthz` の `mail.configured` が `true` になっていることを確認してください。
 
 ## アーキテクチャ
 
