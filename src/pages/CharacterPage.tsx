@@ -589,8 +589,8 @@ export default function CharacterPage() {
       </details>
 
       <details className="card">
-        <summary style={{ cursor: 'pointer', fontWeight: 600 }}>🏰 きょうのぼうけん</summary>
-        <p className="notice" style={{ marginTop: 12 }}>チェックを進めると、ぼうけん単語帳がもらえるよ！</p>
+        <summary style={{ cursor: 'pointer', fontWeight: 600 }}>🏰 今日の冒険</summary>
+        <p className="notice" style={{ marginTop: 12 }}>タスクを進めると、冒険デッキが解放されます。</p>
         {adventureLoading && <p className="counter">読み込み中…</p>}
         {!adventureLoading && !adventure && (
           <p className="counter">ぼうけんデータが取得できませんでした。</p>
@@ -600,6 +600,28 @@ export default function CharacterPage() {
             <p className="badge">
               進み: {adventure.clearedCount}/{adventure.totalTasks} ・ 残りポイント: {proofreadRemaining}
             </p>
+            <div className="xp-bar-container" style={{ marginTop: 8 }}>
+              <div className="xp-bar-label">
+                <span>進行率</span>
+                <span>
+                  {adventure.totalTasks > 0
+                    ? `${Math.round((adventure.clearedCount / adventure.totalTasks) * 100)}%`
+                    : '0%'}
+                </span>
+              </div>
+              <div className="xp-bar">
+                <div
+                  className="xp-bar-fill"
+                  style={{
+                    width: `${adventure.totalTasks > 0 ? (adventure.clearedCount / adventure.totalTasks) * 100 : 0}%`,
+                    background: 'linear-gradient(90deg, #95D5B2, #8ECAE6)'
+                  }}
+                />
+              </div>
+              <small className="candidate-meta">
+                あと {Math.max(0, adventure.totalTasks - adventure.clearedCount)} タスク
+              </small>
+            </div>
             <div className="word-grid">
               {adventureTasks.map((task) => (
                 <div key={task.taskId} className="word-item">
@@ -625,7 +647,7 @@ export default function CharacterPage() {
               ))}
             </div>
             {adventure.unlockReady && (
-              <p className="counter">きょうのぼうけんはクリア済みです。復習画面で単語帳を確認してね！</p>
+              <p className="counter">今日の冒険はクリア済みです。復習画面でデッキを確認できます。</p>
             )}
           </>
         )}

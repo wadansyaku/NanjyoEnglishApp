@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Modal } from '../components/ui';
-import { Link } from '../lib/router';
+import { Link, usePath } from '../lib/router';
 import { type AppSettings } from '../lib/settings';
 import {
   AuthApiError,
@@ -20,6 +20,7 @@ type SettingsPageProps = {
 type ConsentTarget = 'cloud' | 'ai' | null;
 
 export default function SettingsPage({ settings, onChangeSettings }: SettingsPageProps) {
+  const { navigate } = usePath();
   const [consentTarget, setConsentTarget] = useState<ConsentTarget>(null);
   const [agreedDataTransfer, setAgreedDataTransfer] = useState(false);
   const [agreedSafetyRule, setAgreedSafetyRule] = useState(false);
@@ -69,6 +70,7 @@ export default function SettingsPage({ settings, onChangeSettings }: SettingsPag
     await revokeCurrentSession();
     setAuth(null);
     setLinkStatus('ログアウトしました。');
+    navigate('/auth');
   };
 
   const handleLinkEmail = async () => {

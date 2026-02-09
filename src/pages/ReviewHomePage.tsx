@@ -11,8 +11,10 @@ import {
   type DueCard
 } from '../db';
 import {
+  getActiveCurriculumStepId,
   getCurriculumProgress,
   loadCurriculumProgressMap,
+  setActiveCurriculumStepId,
   setCurriculumProgress
 } from '../lib/curriculumProgress';
 import {
@@ -61,6 +63,7 @@ export default function ReviewHomePage({ settings }: ReviewHomePageProps) {
   const [allRange, setAllRange] = useState<WordbankCurriculumResponse['allRange']>(null);
   const [selectedTrackId, setSelectedTrackId] = useState('accelerated');
   const [stepProgress, setStepProgress] = useState(() => loadCurriculumProgressMap());
+  const [activeStepId, setActiveStepId] = useState(() => getActiveCurriculumStepId());
 
   const [quickState, setQuickState] = useState<QuickReviewState>('idle');
   const [quickCards, setQuickCards] = useState<DueCard[]>([]);
@@ -130,6 +133,19 @@ export default function ReviewHomePage({ settings }: ReviewHomePageProps) {
   }, [loadCurriculum, loadData, loadWordbankDecks]);
 
   useEffect(() => {
+    const syncProgress = () => {
+      setStepProgress(loadCurriculumProgressMap());
+      setActiveStepId(getActiveCurriculumStepId());
+    };
+    window.addEventListener('focus', syncProgress);
+    window.addEventListener('popstate', syncProgress);
+    return () => {
+      window.removeEventListener('focus', syncProgress);
+      window.removeEventListener('popstate', syncProgress);
+    };
+  }, []);
+
+  useEffect(() => {
     if (quickState !== 'reviewing' || !settings.autoPronounce || showAnswer) return;
     const card = quickCards[currentIndex];
     if (!card) return;
@@ -179,6 +195,23 @@ export default function ReviewHomePage({ settings }: ReviewHomePageProps) {
   };
 
   const handleStartCurriculumStep = async (step: WordbankCurriculumStep) => {
+    const activeProgress = activeStepId ? stepProgress[activeStepId] : undefined;
+    if (
+      activeStepId &&
+      activeStepId !== step.stepId &&
+      activeProgress &&
+      !activeProgress.isCompleted
+    ) {
+      const activeTitle =
+        tracks
+          .flatMap((track) => track.steps)
+          .find((item) => item.stepId === activeStepId)?.title ?? '進行中ステップ';
+      const shouldSwitch = confirm(
+        `「${activeTitle}」が進行中です。完了前に「${step.title}」へ切り替えますか？`
+      );
+      if (!shouldSwitch) return;
+    }
+
     setWordbankImportingId(step.stepId);
     setWordbankStatus('');
     try {
@@ -205,9 +238,22 @@ export default function ReviewHomePage({ settings }: ReviewHomePageProps) {
       setCurriculumProgress(step.stepId, {
         offset: targetCount,
         total: words.length,
-        chunkSize
+        chunkSize,
+        mastered: Math.min(progress?.mastered ?? 0, targetCount),
+        isCompleted: Boolean(
+          progress?.isCompleted &&
+          targetCount >= words.length &&
+          (progress.mastered ?? 0) >= words.length
+        )
       });
       setStepProgress(loadCurriculumProgressMap());
+      if (progress?.isCompleted) {
+        setActiveCurriculumStepId('');
+        setActiveStepId('');
+      } else {
+        setActiveCurriculumStepId(step.stepId);
+        setActiveStepId(step.stepId);
+      }
 
       setWordbankStatus(
         `「${step.title}」を開始しました。復習画面で 5/10/20語ずつ続きを追加できます。`
@@ -453,15 +499,29 @@ export default function ReviewHomePage({ settings }: ReviewHomePageProps) {
                 {selectedTrack && (
                   <div className="word-grid" style={{ marginTop: 12 }}>
                     <p className="counter">{selectedTrack.description}</p>
+                    {activeStepId && stepProgress[activeStepId] && !stepProgress[activeStepId]?.isCompleted && (
+                      <p className="notice">
+                        進行中: {
+                          selectedTrack.steps.find((item) => item.stepId === activeStepId)?.title
+                          ?? tracks.flatMap((track) => track.steps).find((item) => item.stepId === activeStepId)?.title
+                          ?? activeStepId
+                        } を優先して進めよう
+                      </p>
+                    )}
                     {selectedTrack.steps.map((step) => {
                       const progress = stepProgress[step.stepId];
                       const learned = progress?.offset ?? 0;
+                      const mastered = Math.min(progress?.mastered ?? 0, step.wordCount);
+                      const isCompleted = Boolean(progress?.isCompleted);
+                      const isActive = activeStepId === step.stepId && !isCompleted;
+                      const statusLabel = isCompleted ? '完了' : isActive ? '進行中' : learned > 0 ? '途中' : '未開始';
                       const importing = wordbankImportingId === step.stepId;
                       return (
                         <div key={step.stepId} className="word-item" style={{ alignItems: 'flex-start' }}>
                           <div>
                             <strong>{step.title}</strong>
                             <small className="candidate-meta">{step.wordCount}語 ・ 取り込み済み {Math.min(learned, step.wordCount)}語</small>
+                            <small className="candidate-meta">マスター {mastered}語 ・ 状態: {statusLabel}</small>
                             <small className="candidate-meta">{step.description}</small>
                             {step.note && <small className="candidate-meta">{step.note}</small>}
                           </div>
@@ -471,7 +531,7 @@ export default function ReviewHomePage({ settings }: ReviewHomePageProps) {
                             onClick={() => handleStartCurriculumStep(step)}
                             disabled={importing}
                           >
-                            {importing ? '準備中…' : learned > 0 ? 'つづきを開く' : '学習を始める'}
+                            {importing ? '準備中…' : isCompleted ? '完了を確認' : learned > 0 ? 'つづきを開く' : '学習を始める'}
                           </button>
                         </div>
                       );

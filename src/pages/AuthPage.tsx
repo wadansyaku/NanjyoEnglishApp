@@ -87,7 +87,7 @@ export const AuthPage = ({ navigate }: AuthPageProps) => {
       <div className="card auth-card">
         <h2>🔐 ログイン / 新規登録</h2>
         <p className="notice">
-          メールに届くリンクでログインします。パスワードは不要です。
+          メールに届くリンクでログインします。パスワードは不要です。ログイン後に学習を開始できます。
         </p>
 
         <form onSubmit={handleSubmit} className="auth-form-grid">
@@ -137,16 +137,9 @@ export const AuthPage = ({ navigate }: AuthPageProps) => {
             )}
           </div>
         )}
-
-        <div className="auth-footnote">
-          <button type="button" className="pill secondary" onClick={() => navigate('/review')}>
-            あとでログインする
-          </button>
-        </div>
       </div>
     </section>
   );
 };
 
 export default AuthPage;
-

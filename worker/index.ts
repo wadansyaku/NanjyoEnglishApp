@@ -3185,7 +3185,7 @@ const handleWordbankCurriculum = async (env: Env) => {
     buildStep({
       stepId: 'accelerated_jhs2_bridge',
       title: '中2（速習）',
-      description: '中2は中3導入と一緒に進めます。',
+      description: '中2は中3の導入と一緒に進めます。',
       deckIds: ['default_g8_jhs2', sliceUntil('default_g9_jhs3', defaultG9SplitA)],
       note: '中2の語数が少ないためです。',
       recommendedChunk: 10
@@ -3246,9 +3246,9 @@ const handleWordbankCurriculum = async (env: Env) => {
     buildStep({
       stepId: 'standard_jhs2_bridge',
       title: '中2（標準）',
-      description: '中2の短い範囲を中3導入と一体で進めます。',
+      description: '中2は中3の導入と一緒に進めます。',
       deckIds: ['standard_g8_jhs2', sliceUntil('standard_g9_jhs3', standardG9Split)],
-      note: '中2単独の語数差を吸収するための橋渡しステップです。',
+      note: '中2の語数が少ないためです。',
       recommendedChunk: 10
     }),
     buildStep({

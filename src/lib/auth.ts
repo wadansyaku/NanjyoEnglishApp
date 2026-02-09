@@ -99,19 +99,18 @@ export const bootstrapAuth = async (): Promise<AuthSession> => {
 };
 
 /**
- * 認証を確保（既存セッションがなければ匿名作成）
+ * 認証を確保（ログイン必須）
  */
 export const ensureAuth = async (): Promise<AuthSession> => {
   // Try v2 first
   let cached = loadAuth();
-  if (cached) return cached;
+  if (cached?.isEmailVerified) return cached;
 
   // Migrate from v1
   cached = migrateFromV1();
-  if (cached) return cached;
+  if (cached?.isEmailVerified) return cached;
 
-  // Create new anonymous user
-  return bootstrapAuth();
+  throw new AuthApiError('ログインが必要です。', { code: 'AUTH_REQUIRED' });
 };
 
 /**

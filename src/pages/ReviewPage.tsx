@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from '../lib/router';
+import { Link, usePath } from '../lib/router';
 import {
   createOrUpdateSystemDeck,
   getDeck,
+  getDeckMasterySummary,
   getDeckWords,
   getDueCard,
   getDueCount,
@@ -13,7 +14,13 @@ import {
   type DeckWord,
   type DueCard
 } from '../db';
-import { getCurriculumProgress, setCurriculumProgress } from '../lib/curriculumProgress';
+import {
+  getActiveCurriculumStepId,
+  getCurriculumProgress,
+  markCurriculumStepCompleted,
+  setActiveCurriculumStepId,
+  setCurriculumProgress
+} from '../lib/curriculumProgress';
 import { fetchWordbankCurriculum, fetchWordbankStepWords, type WordbankCurriculumStep } from '../lib/wordbank';
 import type { AppSettings } from '../lib/settings';
 import { speak, stopSpeaking } from '../lib/tts';
@@ -41,6 +48,7 @@ const findStepById = (stepId: string, steps: WordbankCurriculumStep[]) =>
   steps.find((step) => step.stepId === stepId) ?? null;
 
 export default function ReviewPage({ deckId, settings, showToast }: ReviewPageProps) {
+  const { navigate } = usePath();
   const [deckInfo, setDeckInfo] = useState<Deck | null>(null);
   const [deckWords, setDeckWords] = useState<DeckWord[]>([]);
   const [dueCard, setDueCard] = useState<DueCard | null>(null);
@@ -56,6 +64,8 @@ export default function ReviewPage({ deckId, settings, showToast }: ReviewPagePr
     stepId: string;
     total: number;
     loaded: number;
+    mastered: number;
+    completed: boolean;
   } | null>(null);
 
   const deckIdValue = deckId ?? '';
@@ -78,6 +88,7 @@ export default function ReviewPage({ deckId, settings, showToast }: ReviewPagePr
     setDueCount(count);
     const words = await getDeckWords(deckIdValue);
     setDeckWords(words);
+    const mastery = await getDeckMasterySummary(deckIdValue);
 
     const stepId = parseStepIdFromSource(deck.sourceId);
     if (!stepId) {
@@ -86,16 +97,62 @@ export default function ReviewPage({ deckId, settings, showToast }: ReviewPagePr
     }
     const progress = getCurriculumProgress(stepId);
     if (progress) {
-      setChunkSize(progress.chunkSize);
+      const total = Math.max(progress.total, deck.headwordNorms.length);
+      const loaded = Math.min(progress.offset, total);
+      const mastered = Math.max(0, Math.min(total, mastery.mastered));
+      const completed = total > 0 && loaded >= total && mastered >= total;
+      const next = setCurriculumProgress(stepId, {
+        offset: loaded,
+        total,
+        chunkSize: progress.chunkSize,
+        mastered,
+        isCompleted: completed || progress.isCompleted
+      });
+      if (next.isCompleted) {
+        markCurriculumStepCompleted(stepId);
+        if (getActiveCurriculumStepId() === stepId) {
+          setActiveCurriculumStepId('');
+        }
+      } else if (!getActiveCurriculumStepId() && loaded > 0) {
+        setActiveCurriculumStepId(stepId);
+      }
+      setChunkSize(next.chunkSize);
       setCurriculumMeta({
         stepId,
-        total: progress.total,
-        loaded: Math.min(progress.offset, progress.total)
+        total: next.total,
+        loaded: Math.min(next.offset, next.total),
+        mastered: Math.min(next.mastered, next.total),
+        completed: next.isCompleted
       });
       return;
     }
-    setCurriculumMeta({ stepId, total: deck.headwordNorms.length, loaded: deck.headwordNorms.length });
-  }, [deckIdValue]);
+    const total = deck.headwordNorms.length;
+    const loaded = total;
+    const mastered = Math.max(0, Math.min(total, mastery.mastered));
+    const completed = total > 0 && mastered >= total;
+    const next = setCurriculumProgress(stepId, {
+      offset: loaded,
+      total,
+      chunkSize,
+      mastered,
+      isCompleted: completed
+    });
+    if (next.isCompleted) {
+      markCurriculumStepCompleted(stepId);
+      if (getActiveCurriculumStepId() === stepId) {
+        setActiveCurriculumStepId('');
+      }
+    } else if (!getActiveCurriculumStepId() && loaded > 0) {
+      setActiveCurriculumStepId(stepId);
+    }
+    setCurriculumMeta({
+      stepId,
+      total: next.total,
+      loaded: Math.min(next.offset, next.total),
+      mastered: Math.min(next.mastered, next.total),
+      completed: next.isCompleted
+    });
+  }, [chunkSize, deckIdValue]);
 
   useEffect(() => {
     void load();
@@ -172,15 +229,23 @@ export default function ReviewPage({ deckId, settings, showToast }: ReviewPagePr
       setCurriculumProgress(stepId, {
         offset: nextOffset,
         total: words.length,
-        chunkSize: size
+        chunkSize: size,
+        mastered: Math.min(prev?.mastered ?? 0, nextOffset),
+        isCompleted: false
       });
+      setActiveCurriculumStepId(stepId);
       setChunkSize(size);
-      setCurriculumMeta({ stepId, total: words.length, loaded: nextOffset });
+      setCurriculumMeta({
+        stepId,
+        total: words.length,
+        loaded: nextOffset,
+        mastered: Math.min(prev?.mastered ?? 0, nextOffset),
+        completed: false
+      });
       setStatus(`+${nextOffset - currentOffset}語 追加しました。`);
       showToast?.(`+${nextOffset - currentOffset}語 追加`, 'success');
       if (localDeckId !== deckIdValue) {
-        window.history.pushState({}, '', `/review/${localDeckId}`);
-        window.dispatchEvent(new PopStateEvent('popstate'));
+        navigate(`/review/${localDeckId}`);
         return;
       }
       await load();
@@ -243,7 +308,7 @@ export default function ReviewPage({ deckId, settings, showToast }: ReviewPagePr
             </p>
             {curriculumMeta && (
               <p className="counter" style={{ marginTop: 8 }}>
-                取り込み済み: {curriculumMeta.loaded} / {curriculumMeta.total}語
+                取り込み済み: {curriculumMeta.loaded} / {curriculumMeta.total}語 ・ マスター: {curriculumMeta.mastered}語
               </p>
             )}
             <div style={{ marginTop: 20 }}>
@@ -277,6 +342,9 @@ export default function ReviewPage({ deckId, settings, showToast }: ReviewPagePr
                 <small className="candidate-meta">
                   学習範囲: {curriculumMeta.loaded} / {curriculumMeta.total}語
                 </small>
+                <small className="candidate-meta">
+                  マスター: {curriculumMeta.mastered} / {curriculumMeta.total}語 {curriculumMeta.completed ? '・完了 ✅' : ''}
+                </small>
                 {canAddChunk && (
                   <div className="scan-inline-actions" style={{ marginTop: 8 }}>
                     {[5, 10, 20].map((size) => (
@@ -291,6 +359,11 @@ export default function ReviewPage({ deckId, settings, showToast }: ReviewPagePr
                       </button>
                     ))}
                   </div>
+                )}
+                {!canAddChunk && !curriculumMeta.completed && curriculumMeta.total > 0 && (
+                  <p className="counter" style={{ marginTop: 8 }}>
+                    すべて取り込み済みです。復習してこのステップを完了させよう。
+                  </p>
                 )}
               </div>
             )}

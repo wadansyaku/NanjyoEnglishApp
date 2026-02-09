@@ -9,7 +9,7 @@ import TestPage from './pages/TestPage';
 import AuthPage from './pages/AuthPage';
 import AuthVerifyPage from './pages/AuthVerifyPage';
 import { Link, usePath } from './lib/router';
-import { ensureAuth } from './lib/auth';
+import { ensureAuth, getAuth } from './lib/auth';
 import { loadLastOcrMetrics } from './lib/feedbackMeta';
 import { getXpSummary } from './db';
 import {
@@ -32,6 +32,10 @@ const makeToastId = () => Date.now() + Math.floor(Math.random() * 1000);
 export default function App() {
   const { path, navigate } = usePath();
   const normalizedPath = path === '/' ? '/scan' : path;
+  const auth = getAuth();
+  const isVerifiedLogin = auth?.isEmailVerified === true;
+  const isAuthRoute = normalizedPath === '/auth' || normalizedPath === '/auth/verify';
+  const effectivePath = !isAuthRoute && !isVerifiedLogin ? '/auth' : normalizedPath;
 
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [feedbackOpen, setFeedbackOpen] = useState(false);
@@ -69,9 +73,15 @@ export default function App() {
 
   useEffect(() => {
     if (path === '/') {
-      navigate('/scan');
+      navigate(isVerifiedLogin ? '/scan' : '/auth');
     }
-  }, [path, navigate]);
+  }, [path, navigate, isVerifiedLogin]);
+
+  useEffect(() => {
+    if (!isAuthRoute && !isVerifiedLogin) {
+      navigate('/auth');
+    }
+  }, [isAuthRoute, isVerifiedLogin, navigate]);
 
   useEffect(() => {
     if (!feedbackOpen) return;
@@ -90,8 +100,18 @@ export default function App() {
   }, [feedbackOpen]);
 
   useEffect(() => {
+    if (!isVerifiedLogin) {
+      setFeedbackOpen(false);
+    }
+  }, [isVerifiedLogin]);
+
+  useEffect(() => {
     let cancelled = false;
     void (async () => {
+      if (!isVerifiedLogin) {
+        setXpLabel('ログインして開始');
+        return;
+      }
       const summary = await getXpSummary();
       if (cancelled) return;
       setXpLabel(`Lv.${summary.level} / ${summary.xpTotal}pt`);
@@ -99,7 +119,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [normalizedPath]);
+  }, [effectivePath, isVerifiedLogin]);
 
   useEffect(() => {
     bumpUsageMinute();
@@ -141,7 +161,7 @@ export default function App() {
           type: feedbackType,
           message,
           contextJson: {
-            screen: normalizedPath,
+            screen: effectivePath,
             device: summarizeDevice(navigator.userAgent),
             latestOcr: ocrMetrics
               ? {
@@ -176,41 +196,41 @@ export default function App() {
   };
 
   const content = useMemo(() => {
-    if (normalizedPath.startsWith('/review/')) {
-      const deckId = normalizedPath.replace('/review/', '');
+    if (effectivePath.startsWith('/review/')) {
+      const deckId = effectivePath.replace('/review/', '');
       return <ReviewPage deckId={deckId} settings={settings} showToast={showToast} />;
     }
-    if (normalizedPath.startsWith('/test/')) {
-      const deckId = normalizedPath.replace('/test/', '');
+    if (effectivePath.startsWith('/test/')) {
+      const deckId = effectivePath.replace('/test/', '');
       return <TestPage deckId={deckId} />;
     }
-    if (normalizedPath === '/review') {
+    if (effectivePath === '/review') {
       return <ReviewHomePage settings={settings} />;
     }
-    if (normalizedPath === '/character') {
+    if (effectivePath === '/character') {
       return <CharacterPage />;
     }
-    if (normalizedPath === '/settings') {
+    if (effectivePath === '/settings') {
       return <SettingsPage settings={settings} onChangeSettings={handleChangeSettings} />;
     }
-    if (normalizedPath === '/admin') {
+    if (effectivePath === '/admin') {
       return <AdminPage settings={settings} onChangeSettings={handleChangeSettings} />;
     }
-    if (normalizedPath === '/auth') {
+    if (effectivePath === '/auth') {
       return <AuthPage navigate={navigate} />;
     }
-    if (normalizedPath === '/auth/verify') {
+    if (effectivePath === '/auth/verify') {
       return <AuthVerifyPage navigate={navigate} />;
     }
     return <ScanPage settings={settings} showToast={showToast} navigate={navigate} />;
-  }, [normalizedPath, navigate, settings, showToast, handleChangeSettings]);
+  }, [effectivePath, navigate, settings, showToast, handleChangeSettings]);
 
-  const isScanActive = normalizedPath === '/scan';
+  const isScanActive = effectivePath === '/scan';
   const isReviewActive =
-    normalizedPath === '/review' ||
-    normalizedPath.startsWith('/review/') ||
-    normalizedPath.startsWith('/test/');
-  const isCharacterActive = normalizedPath === '/character';
+    effectivePath === '/review' ||
+    effectivePath.startsWith('/review/') ||
+    effectivePath.startsWith('/test/');
+  const isCharacterActive = effectivePath === '/character';
 
   return (
     <main className="app-shell">
@@ -218,27 +238,35 @@ export default function App() {
         <h1>AIYuMe English</h1>
         <div className="app-header-actions">
           <span className="badge badge-sm">{xpLabel}</span>
-          <Link className="pill pill-sm" to="/settings">⚙️</Link>
-          <button className="pill pill-sm" type="button" onClick={() => setFeedbackOpen(true)}>💬</button>
+          {isVerifiedLogin ? (
+            <>
+              <Link className="pill pill-sm" to="/settings">⚙️</Link>
+              <button className="pill pill-sm" type="button" onClick={() => setFeedbackOpen(true)}>💬</button>
+            </>
+          ) : (
+            <Link className="pill pill-sm" to="/auth">ログイン</Link>
+          )}
         </div>
       </header>
 
       <div className="app-content">{content}</div>
 
-      <nav className="bottom-nav" aria-label="メインナビゲーション">
-        <Link className={`bottom-nav-item ${isScanActive ? 'active' : ''}`} to="/scan">
-          <span>📷</span>
-          <small>写真で単語</small>
-        </Link>
-        <Link className={`bottom-nav-item ${isReviewActive ? 'active' : ''}`} to="/review">
-          <span>📖</span>
-          <small>復習</small>
-        </Link>
-        <Link className={`bottom-nav-item ${isCharacterActive ? 'active' : ''}`} to="/character">
-          <span>⭐</span>
-          <small>がんばり記録</small>
-        </Link>
-      </nav>
+      {isVerifiedLogin && (
+        <nav className="bottom-nav" aria-label="メインナビゲーション">
+          <Link className={`bottom-nav-item ${isScanActive ? 'active' : ''}`} to="/scan">
+            <span>📷</span>
+            <small>写真で単語</small>
+          </Link>
+          <Link className={`bottom-nav-item ${isReviewActive ? 'active' : ''}`} to="/review">
+            <span>📖</span>
+            <small>復習</small>
+          </Link>
+          <Link className={`bottom-nav-item ${isCharacterActive ? 'active' : ''}`} to="/character">
+            <span>⭐</span>
+            <small>がんばり記録</small>
+          </Link>
+        </nav>
+      )}
 
       <Modal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} title="アプリへの意見">
         <p className="notice">名前・連絡先・本文の全文は書かず、短文で送ってください。</p>

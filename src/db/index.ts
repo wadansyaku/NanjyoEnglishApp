@@ -326,6 +326,21 @@ export const getDueCount = async (deckId: string) => {
   return db.srs.where('[deckId+dueAt]').between([deckId, 0], [deckId, now]).count();
 };
 
+export const getDeckMasterySummary = async (deckId: string) => {
+  const states = await db.srs.where('deckId').equals(deckId).toArray();
+  const total = states.length;
+  if (total === 0) {
+    return { mastered: 0, total: 0 };
+  }
+  let mastered = 0;
+  for (const state of states) {
+    if (isMastered(state)) {
+      mastered += 1;
+    }
+  }
+  return { mastered, total };
+};
+
 export const listDeckDueSummaries = async (): Promise<DeckDueSummary[]> => {
   const decks = await listDecks();
   const summaries = await Promise.all(
