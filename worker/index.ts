@@ -156,6 +156,10 @@ type UsageReportRequest = {
   minutesToday: number;
 };
 
+type CompleteTaskRequest = {
+  answerHeadwordNorm?: string;
+};
+
 type GlobalAppSettings = {
   ocrDebug: boolean;
   defaultPsm: '6' | '7' | '11';
@@ -274,6 +278,17 @@ const parseBoolean = (raw: string | undefined, fallback = false) => {
   return raw === '1' || raw.toLowerCase() === 'true';
 };
 
+const shuffleArray = <T>(input: T[]) => {
+  const output = [...input];
+  for (let i = output.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = output[i];
+    output[i] = output[j];
+    output[j] = tmp;
+  }
+  return output;
+};
+
 const AUTH_RATE_LIMIT = {
   requestEmailWindowMs: 15 * 60 * 1000,
   requestEmailLimit: 3,
@@ -320,7 +335,7 @@ const consumeAuthRateLimit = async (
 
   const now = Date.now();
   const windowStart = Math.floor(now / windowMs) * windowMs;
-  await dbRun(
+  const updateResult = await dbRun(
     dbBind(
       dbPrepare(
         env.DB,
@@ -334,7 +349,7 @@ const consumeAuthRateLimit = async (
     )
   );
 
-  const updateResult = await dbRun(
+  await dbRun(
     dbBind(
       dbPrepare(
         env.DB,
@@ -4380,6 +4395,231 @@ const ensureDailyDungeon = async (env: Env) => {
   return dungeonId;
 };
 
+const ensureUserDungeonTasks = async (env: Env, userId: string, dungeonId: string) => {
+  await dbRun(
+    dbPrepare(
+      env.DB,
+      `CREATE TABLE IF NOT EXISTS game_user_dungeon_tasks (
+         user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+         task_id TEXT NOT NULL REFERENCES game_dungeon_tasks(task_id) ON DELETE CASCADE,
+         dungeon_id TEXT NOT NULL REFERENCES game_dungeons_daily(dungeon_id) ON DELETE CASCADE,
+         status TEXT NOT NULL DEFAULT 'pending',
+         attempts INTEGER NOT NULL DEFAULT 0,
+         last_answer_correct INTEGER,
+         solved_at INTEGER,
+         created_at INTEGER NOT NULL,
+         updated_at INTEGER NOT NULL,
+         PRIMARY KEY (user_id, task_id),
+         CHECK (status IN ('pending', 'done')),
+         CHECK (last_answer_correct IS NULL OR last_answer_correct IN (0, 1))
+       )`
+    )
+  );
+  await dbRun(
+    dbPrepare(
+      env.DB,
+      `CREATE INDEX IF NOT EXISTS idx_game_user_dungeon_tasks_user_dungeon
+       ON game_user_dungeon_tasks(user_id, dungeon_id, status, updated_at DESC)`
+    )
+  );
+
+  const now = Date.now();
+  await dbRun(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `INSERT INTO game_user_dungeon_tasks
+           (user_id, task_id, dungeon_id, status, attempts, created_at, updated_at)
+         SELECT ?1, task_id, dungeon_id, 'pending', 0, ?3, ?3
+         FROM game_dungeon_tasks
+         WHERE dungeon_id = ?2
+         ON CONFLICT(user_id, task_id) DO NOTHING`
+      ),
+      userId,
+      dungeonId,
+      now
+    )
+  );
+};
+
+const resolveTaskLexemeMap = async (
+  env: Env,
+  inputNorms: string[]
+) => {
+  const normalized = [...new Set(inputNorms.map((norm) => normalizeHeadword(norm)).filter(Boolean))] as string[];
+  const map = new Map<string, { headword: string; meaningJa: string }>();
+  if (normalized.length === 0) return map;
+
+  const placeholders = normalized.map((_, idx) => `?${idx + 1}`).join(',');
+
+  const coreRows = await dbAll<{
+    headword_norm: string;
+    headword: string;
+    meaning_ja_short: string;
+  }>(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `SELECT headword_norm, headword, meaning_ja_short
+         FROM core_words
+         WHERE headword_norm IN (${placeholders})`
+      ),
+      ...normalized
+    )
+  );
+
+  for (const row of coreRows.results ?? []) {
+    map.set(row.headword_norm, {
+      headword: row.headword,
+      meaningJa: row.meaning_ja_short
+    });
+  }
+
+  const canonicalRows = await dbAll<{
+    headword_norm: string;
+    meaning_ja_short: string;
+  }>(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `SELECT headword_norm, meaning_ja_short
+         FROM ugc_lexeme_canonical
+         WHERE headword_norm IN (${placeholders})`
+      ),
+      ...normalized
+    )
+  );
+
+  for (const row of canonicalRows.results ?? []) {
+    const current = map.get(row.headword_norm);
+    map.set(row.headword_norm, {
+      headword: current?.headword ?? row.headword_norm,
+      meaningJa: row.meaning_ja_short
+    });
+  }
+
+  const missing = normalized.filter((norm) => !map.has(norm));
+  if (missing.length === 0) return map;
+
+  const missingPlaceholders = missing.map((_, idx) => `?${idx + 1}`).join(',');
+  const lexemesResult = await dbAll<{
+    lexeme_id: number;
+    headword: string;
+    headword_norm: string;
+  }>(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `SELECT lexeme_id, headword, headword_norm
+         FROM lexemes
+         WHERE headword_norm IN (${missingPlaceholders})`
+      ),
+      ...missing
+    )
+  );
+
+  const lexemes = lexemesResult.results ?? [];
+  if (lexemes.length === 0) return map;
+
+  const lexemeIds = lexemes.map((row) => row.lexeme_id);
+  const entryPlaceholders = lexemeIds.map((_, idx) => `?${idx + 1}`).join(',');
+  const entriesResult = await dbAll<{
+    lexeme_id: number;
+    meaning_ja: string | null;
+  }>(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `SELECT lexeme_id, meaning_ja
+         FROM (
+           SELECT lexeme_id, meaning_ja, created_at,
+             ROW_NUMBER() OVER (PARTITION BY lexeme_id ORDER BY created_at DESC) AS rn
+           FROM lexeme_entries
+           WHERE lexeme_id IN (${entryPlaceholders}) AND scope_type = 'public'
+         )
+         WHERE rn = 1`
+      ),
+      ...lexemeIds
+    )
+  );
+
+  const entryMap = new Map<number, string>();
+  for (const row of entriesResult.results ?? []) {
+    entryMap.set(row.lexeme_id, row.meaning_ja ?? '');
+  }
+
+  for (const lexeme of lexemes) {
+    map.set(lexeme.headword_norm, {
+      headword: lexeme.headword,
+      meaningJa: entryMap.get(lexeme.lexeme_id) ?? ''
+    });
+  }
+
+  return map;
+};
+
+const buildGardenQuizMap = async (
+  env: Env,
+  tasks: Array<{ task_id: string; headword_norm: string }>
+) => {
+  const taskNorms = [...new Set(tasks.map((task) => normalizeHeadword(task.headword_norm)).filter(Boolean))] as string[];
+  const lexemeMap = await resolveTaskLexemeMap(env, taskNorms);
+  const optionPool = new Map(lexemeMap);
+
+  if (optionPool.size < 8) {
+    const additionalRows = await dbAll<{
+      headword_norm: string;
+      headword: string;
+      meaning_ja_short: string;
+    }>(
+      dbPrepare(
+        env.DB,
+        `SELECT headword_norm, headword, meaning_ja_short
+         FROM core_words
+         ORDER BY updated_at DESC, headword ASC
+         LIMIT 40`
+      )
+    );
+    for (const row of additionalRows.results ?? []) {
+      if (!optionPool.has(row.headword_norm)) {
+        optionPool.set(row.headword_norm, {
+          headword: row.headword,
+          meaningJa: row.meaning_ja_short
+        });
+      }
+    }
+  }
+
+  const quizMap = new Map<string, {
+    promptMeaningJa: string;
+    choices: Array<{ headwordNorm: string; label: string }>;
+  }>();
+
+  for (const task of tasks) {
+    const correctNorm = normalizeHeadword(task.headword_norm);
+    if (!correctNorm) continue;
+    const correct = lexemeMap.get(correctNorm) ?? optionPool.get(correctNorm);
+    if (!correct || !correct.meaningJa) continue;
+
+    const distractors = shuffleArray(
+      [...optionPool.keys()].filter((norm) => norm !== correctNorm)
+    ).slice(0, 3);
+
+    const choicesNorms = shuffleArray([correctNorm, ...distractors]);
+    if (choicesNorms.length < 2) continue;
+
+    quizMap.set(task.task_id, {
+      promptMeaningJa: sanitizeSingleLine(correct.meaningJa).slice(0, LIMITS.meaningMax),
+      choices: choicesNorms.map((norm) => ({
+        headwordNorm: norm,
+        label: optionPool.get(norm)?.headword ?? norm
+      }))
+    });
+  }
+
+  return quizMap;
+};
+
 const handleCommunityCreateChangeset = async (request: Request, env: Env, auth: AuthContext) => {
   let body: CreateChangesetRequest;
   try {
@@ -4918,6 +5158,7 @@ const handleCommunityLexeme = async (env: Env, rawHeadword: string) => {
 
 const handleCommunityTasks = async (env: Env, auth: AuthContext) => {
   const dungeonId = await ensureDailyDungeon(env);
+  await ensureUserDungeonTasks(env, auth.userId, dungeonId);
   const usage = await getUsageSnapshot(env, auth.userId);
 
   const dungeonRow = await dbAll<{ date: string; title: string; description: string | null }>(
@@ -4937,24 +5178,64 @@ const handleCommunityTasks = async (env: Env, auth: AuthContext) => {
     type: string;
     headword_norm: string;
     status: string;
+    attempts: number;
   }>(
     dbBind(
       dbPrepare(
         env.DB,
-        `SELECT task_id, type, headword_norm, status
-         FROM game_dungeon_tasks
-         WHERE dungeon_id = ?1
-         ORDER BY created_at ASC`
+        `SELECT t.task_id, t.type, t.headword_norm, ut.status, ut.attempts
+         FROM game_dungeon_tasks t
+         JOIN game_user_dungeon_tasks ut
+           ON ut.task_id = t.task_id
+          AND ut.user_id = ?2
+         WHERE t.dungeon_id = ?1
+         ORDER BY t.created_at ASC`
       ),
+      dungeonId,
+      auth.userId
+    )
+  );
+
+  const doneCountResult = await dbAll<{ count: number }>(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `SELECT COUNT(*) AS count
+         FROM game_user_dungeon_tasks
+         WHERE user_id = ?1
+           AND dungeon_id = ?2
+           AND status = 'done'`
+      ),
+      auth.userId,
       dungeonId
     )
   );
 
-  const progressRow = await dbAll<{ cleared_count: number; reward_claimed: number }>(
+  const totalTasks = tasks.results?.length ?? 0;
+  const clearedCount = Number(doneCountResult.results?.[0]?.count ?? 0);
+  const unlockReady = totalTasks > 0 && clearedCount >= totalTasks;
+
+  await dbRun(
     dbBind(
       dbPrepare(
         env.DB,
-        `SELECT cleared_count, reward_claimed
+        `INSERT INTO user_dungeon_progress (user_id, date, dungeon_id, cleared_count, reward_claimed)
+         VALUES (?1, ?2, ?3, ?4, 0)
+         ON CONFLICT(user_id, date, dungeon_id) DO UPDATE SET
+           cleared_count = excluded.cleared_count`
+      ),
+      auth.userId,
+      usage.date,
+      dungeonId,
+      clearedCount
+    )
+  );
+
+  const progressRow = await dbAll<{ reward_claimed: number }>(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `SELECT reward_claimed
          FROM user_dungeon_progress
          WHERE user_id = ?1 AND date = ?2 AND dungeon_id = ?3`
       ),
@@ -4964,9 +5245,7 @@ const handleCommunityTasks = async (env: Env, auth: AuthContext) => {
     )
   );
 
-  const progress = progressRow.results?.[0] ?? { cleared_count: 0, reward_claimed: 0 };
-  const totalTasks = tasks.results?.length ?? 0;
-  const unlockReady = totalTasks > 0 && progress.cleared_count >= totalTasks;
+  const quizMap = await buildGardenQuizMap(env, tasks.results ?? []);
 
   return jsonResponse({
     ok: true,
@@ -4976,8 +5255,8 @@ const handleCommunityTasks = async (env: Env, auth: AuthContext) => {
       title: dungeonRow.results?.[0]?.title ?? '今日のお庭',
       description: dungeonRow.results?.[0]?.description ?? '',
       totalTasks,
-      clearedCount: progress.cleared_count,
-      rewardClaimed: Boolean(progress.reward_claimed),
+      clearedCount,
+      rewardClaimed: Boolean(progressRow.results?.[0]?.reward_claimed ?? 0),
       unlockReady
     },
     usage,
@@ -4985,19 +5264,29 @@ const handleCommunityTasks = async (env: Env, auth: AuthContext) => {
       taskId: task.task_id,
       type: task.type,
       headwordNorm: task.headword_norm,
-      status: task.status
+      status: task.status,
+      attempts: Number(task.attempts ?? 0),
+      quiz: quizMap.get(task.task_id) ?? null
     }))
   });
 };
 
 const handleCommunityCompleteTask = async (
+  request: Request,
   env: Env,
   auth: AuthContext,
   taskId: string
 ) => {
-  const usage = await getUsageSnapshot(env, auth.userId);
-  if (usage.proofreadRemainingToday <= 0) {
-    return tooManyRequests('今日のお世話回数を使い切りました。明日また育てよう。');
+  let body: CompleteTaskRequest;
+  try {
+    body = await request.json();
+  } catch {
+    return badRequest('Invalid JSON.');
+  }
+
+  const answerHeadwordNorm = normalizeHeadword(body.answerHeadwordNorm ?? '');
+  if (!answerHeadwordNorm) {
+    return badRequest('answerHeadwordNorm is required.');
   }
 
   const row = await dbAll<{
@@ -5021,8 +5310,65 @@ const handleCommunityCompleteTask = async (
     return jsonResponse({ ok: false, message: 'Task not found.' }, { status: 404 });
   }
 
-  if (task.status === 'done') {
-    return jsonResponse({ ok: true, alreadyDone: true });
+  await ensureUserDungeonTasks(env, auth.userId, task.dungeon_id);
+
+  const userTaskRow = await dbAll<{
+    status: string;
+  }>(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `SELECT status
+         FROM game_user_dungeon_tasks
+         WHERE user_id = ?1
+           AND task_id = ?2
+         LIMIT 1`
+      ),
+      auth.userId,
+      taskId
+    )
+  );
+  const userTask = userTaskRow.results?.[0];
+  if (!userTask) {
+    return jsonResponse({ ok: false, message: 'Task not found.' }, { status: 404 });
+  }
+
+  if (userTask.status === 'done') {
+    const latestUsage = await getUsageSnapshot(env, auth.userId);
+    return jsonResponse({ ok: true, alreadyDone: true, correct: true, usage: latestUsage });
+  }
+
+  const correctHeadwordNorm = normalizeHeadword(task.headword_norm) ?? task.headword_norm;
+  if (answerHeadwordNorm !== correctHeadwordNorm) {
+    await dbRun(
+      dbBind(
+        dbPrepare(
+          env.DB,
+          `UPDATE game_user_dungeon_tasks
+           SET attempts = attempts + 1,
+               last_answer_correct = 0,
+               updated_at = ?3
+           WHERE user_id = ?1
+             AND task_id = ?2`
+        ),
+        auth.userId,
+        taskId,
+        Date.now()
+      )
+    );
+
+    const latestUsage = await getUsageSnapshot(env, auth.userId);
+    return jsonResponse({
+      ok: true,
+      correct: false,
+      message: 'ちがうかも。もう一回えらんでみよう。',
+      usage: latestUsage
+    });
+  }
+
+  const usage = await getUsageSnapshot(env, auth.userId);
+  if (usage.proofreadRemainingToday <= 0) {
+    return tooManyRequests('今日のお世話回数を使い切りました。明日また育てよう。');
   }
 
   const consumed = await consumeProofreadToken(env, auth.userId);
@@ -5030,21 +5376,31 @@ const handleCommunityCompleteTask = async (
     return tooManyRequests('今日のお世話回数を使い切りました。明日また育てよう。');
   }
 
-  await dbRun(
+  const updateResult = await dbRun(
     dbBind(
       dbPrepare(
         env.DB,
-        `UPDATE game_dungeon_tasks
+        `UPDATE game_user_dungeon_tasks
          SET status = 'done',
-             assigned_to = ?2,
+             attempts = attempts + 1,
+             last_answer_correct = 1,
+             solved_at = ?3,
              updated_at = ?3
-         WHERE task_id = ?1`
+         WHERE user_id = ?1
+           AND task_id = ?2
+           AND status = 'pending'`
       ),
-      taskId,
       auth.userId,
+      taskId,
       Date.now()
     )
   );
+
+  const statusChanges = Number((updateResult as { meta?: { changes?: number } }).meta?.changes ?? 0);
+  if (statusChanges <= 0) {
+    const latestUsage = await getUsageSnapshot(env, auth.userId);
+    return jsonResponse({ ok: true, alreadyDone: true, correct: true, usage: latestUsage });
+  }
 
   const dateKey = getUsageDateKey();
 
@@ -5053,10 +5409,12 @@ const handleCommunityCompleteTask = async (
       dbPrepare(
         env.DB,
         `SELECT COUNT(*) AS count
-         FROM game_dungeon_tasks
-         WHERE dungeon_id = ?1
+         FROM game_user_dungeon_tasks
+         WHERE user_id = ?1
+           AND dungeon_id = ?2
            AND status = 'done'`
       ),
+      auth.userId,
       task.dungeon_id
     )
   );
@@ -5066,9 +5424,11 @@ const handleCommunityCompleteTask = async (
       dbPrepare(
         env.DB,
         `SELECT COUNT(*) AS count
-         FROM game_dungeon_tasks
-         WHERE dungeon_id = ?1`
+         FROM game_user_dungeon_tasks
+         WHERE user_id = ?1
+           AND dungeon_id = ?2`
       ),
+      auth.userId,
       task.dungeon_id
     )
   );
@@ -5135,6 +5495,7 @@ const handleCommunityCompleteTask = async (
 
   return jsonResponse({
     ok: true,
+    correct: true,
     clearedCount,
     totalCount,
     usage: latestUsage,
@@ -5383,7 +5744,7 @@ export default {
       }
       const auth = await requireAuth(request, env);
       if (!auth) return unauthorized();
-      return handleCommunityCompleteTask(env, auth, taskId);
+      return handleCommunityCompleteTask(request, env, auth, taskId);
     }
 
     if (url.pathname.startsWith('/api/v1/community/lexeme/')) {

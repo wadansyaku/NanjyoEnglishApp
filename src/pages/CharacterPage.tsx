@@ -13,6 +13,7 @@ import {
 import { usePath } from '../lib/router';
 import { ensureAuth } from '../lib/auth';
 import { getUsageMinutesToday } from '../lib/usage';
+import { Modal } from '../components/ui';
 
 // ============================================
 // 進化システム定義
@@ -165,6 +166,23 @@ const getGardenTaskLabel = (taskType: string) => {
   return 'お世話タスク';
 };
 
+type GardenQuiz = {
+  promptMeaningJa: string;
+  choices: Array<{
+    headwordNorm: string;
+    label: string;
+  }>;
+};
+
+type GardenTask = {
+  taskId: string;
+  type: string;
+  headwordNorm: string;
+  status: string;
+  attempts: number;
+  quiz: GardenQuiz | null;
+};
+
 export default function CharacterPage() {
   const { navigate } = usePath();
   const [summary, setSummary] = useState<XpSummary | null>(null);
@@ -178,16 +196,13 @@ export default function CharacterPage() {
     clearedCount: number;
     unlockReady: boolean;
   } | null>(null);
-  const [adventureTasks, setAdventureTasks] = useState<Array<{
-    taskId: string;
-    type: string;
-    headwordNorm: string;
-    status: string;
-  }>>([]);
+  const [adventureTasks, setAdventureTasks] = useState<GardenTask[]>([]);
   const [proofreadRemaining, setProofreadRemaining] = useState(0);
   const [adventureLoading, setAdventureLoading] = useState(false);
   const [adventureStatus, setAdventureStatus] = useState('');
   const [completingTaskId, setCompletingTaskId] = useState('');
+  const [activeQuizTask, setActiveQuizTask] = useState<GardenTask | null>(null);
+  const [selectedAnswerNorm, setSelectedAnswerNorm] = useState('');
 
   useEffect(() => {
     const loadData = async () => {
@@ -223,7 +238,7 @@ export default function CharacterPage() {
     try {
       const session = await ensureAuth();
       const minutesToday = getUsageMinutesToday();
-      await fetch('/api/v1/usage/report', {
+      const usageResponse = await fetch('/api/v1/usage/report', {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -231,6 +246,9 @@ export default function CharacterPage() {
         },
         body: JSON.stringify({ minutesToday })
       });
+      if (!usageResponse.ok) {
+        throw new Error('利用状況の同期に失敗しました。しばらくしてから試してください。');
+      }
 
       const response = await fetch('/api/v1/community/tasks', {
         headers: {
@@ -254,12 +272,7 @@ export default function CharacterPage() {
         usage: {
           proofreadRemainingToday: number;
         };
-        tasks: Array<{
-          taskId: string;
-          type: string;
-          headwordNorm: string;
-          status: string;
-        }>;
+        tasks: GardenTask[];
       };
 
       setAdventure(data.dungeon);
@@ -321,21 +334,26 @@ export default function CharacterPage() {
     });
   };
 
-  const handleCompleteTask = async (taskId: string) => {
-    if (!taskId) return;
-    setCompletingTaskId(taskId);
+  const handleCompleteTask = async (task: GardenTask, answerHeadwordNorm: string) => {
+    if (!task?.taskId || !answerHeadwordNorm) return false;
+    setCompletingTaskId(task.taskId);
     setAdventureStatus('');
     try {
       const session = await ensureAuth();
-      const response = await fetch(`/api/v1/community/tasks/${encodeURIComponent(taskId)}/complete`, {
+      const response = await fetch(`/api/v1/community/tasks/${encodeURIComponent(task.taskId)}/complete`, {
         method: 'POST',
         headers: {
+          'content-type': 'application/json',
           Authorization: `Bearer ${session.apiKey}`
-        }
+        },
+        body: JSON.stringify({
+          answerHeadwordNorm
+        })
       });
 
       const data = (await response.json()) as {
         ok: boolean;
+        correct?: boolean;
         message?: string;
         usage?: { proofreadRemainingToday?: number };
         unlockedDeck?: { sourceId: string; headwordNorms: string[] } | null;
@@ -347,6 +365,12 @@ export default function CharacterPage() {
 
       if (data.usage?.proofreadRemainingToday != null) {
         setProofreadRemaining(Math.max(0, Number(data.usage.proofreadRemainingToday)));
+      }
+
+      if (data.correct === false) {
+        setAdventureStatus(data.message || 'ちがうかも。もう一度えらんでみよう。');
+        await loadAdventure();
+        return false;
       }
 
       if (data.unlockedDeck && data.unlockedDeck.headwordNorms.length > 0) {
@@ -362,10 +386,32 @@ export default function CharacterPage() {
       }
 
       await loadAdventure();
+      return true;
     } catch (error) {
       setAdventureStatus((error as Error).message || 'お世話の完了に失敗しました。');
+      return false;
     } finally {
       setCompletingTaskId('');
+    }
+  };
+
+  const openTaskQuiz = (task: GardenTask) => {
+    if (task.status === 'done') return;
+    if (!task.quiz || task.quiz.choices.length < 2) {
+      setAdventureStatus('このお世話は準備中です。しばらくしてから試してください。');
+      return;
+    }
+    setSelectedAnswerNorm('');
+    setActiveQuizTask(task);
+    setAdventureStatus('');
+  };
+
+  const handleSubmitTaskQuiz = async () => {
+    if (!activeQuizTask || !selectedAnswerNorm) return;
+    const correct = await handleCompleteTask(activeQuizTask, selectedAnswerNorm);
+    if (correct) {
+      setActiveQuizTask(null);
+      setSelectedAnswerNorm('');
     }
   };
 
@@ -673,16 +719,27 @@ export default function CharacterPage() {
               {adventureTasks.map((task) => (
                 <div key={task.taskId} className="word-item">
                   <div>
-                    <strong>{task.headwordNorm || 'task'}</strong>
+                    <strong>{task.quiz?.promptMeaningJa || task.headwordNorm || 'task'}</strong>
                     <small className="candidate-meta">
                       {getGardenTaskLabel(task.type)} ・ {task.status === 'done' ? '完了' : '未完了'}
                     </small>
+                    {task.quiz && (
+                      <small className="candidate-meta">この意味に合う英単語を選ぶ</small>
+                    )}
+                    {task.attempts > 0 && (
+                      <small className="candidate-meta">チャレンジ回数: {task.attempts}</small>
+                    )}
                   </div>
                   <button
                     className="pill"
                     type="button"
-                    disabled={task.status === 'done' || completingTaskId === task.taskId || proofreadRemaining <= 0}
-                    onClick={() => handleCompleteTask(task.taskId)}
+                    disabled={
+                      task.status === 'done' ||
+                      completingTaskId === task.taskId ||
+                      proofreadRemaining <= 0 ||
+                      !task.quiz
+                    }
+                    onClick={() => openTaskQuiz(task)}
                   >
                     {task.status === 'done'
                       ? '完了'
@@ -700,6 +757,48 @@ export default function CharacterPage() {
         )}
         {adventureStatus && <p className="counter">{adventureStatus}</p>}
       </details>
+
+      <Modal
+        open={Boolean(activeQuizTask)}
+        onClose={() => {
+          if (completingTaskId) return;
+          setActiveQuizTask(null);
+          setSelectedAnswerNorm('');
+        }}
+        title="お世話クイズ"
+      >
+        {activeQuizTask?.quiz && (
+          <div className="word-grid" style={{ marginTop: 8 }}>
+            <p className="notice">
+              この意味に合う英単語を1つ選んでね。
+            </p>
+            <p className="counter">意味: {activeQuizTask.quiz.promptMeaningJa}</p>
+            <div className="scan-inline-actions" style={{ marginTop: 8 }}>
+              {activeQuizTask.quiz.choices.map((choice) => (
+                <button
+                  key={choice.headwordNorm}
+                  type="button"
+                  className={selectedAnswerNorm === choice.headwordNorm ? '' : 'secondary'}
+                  onClick={() => setSelectedAnswerNorm(choice.headwordNorm)}
+                  disabled={Boolean(completingTaskId)}
+                >
+                  {choice.label}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              style={{ marginTop: 12 }}
+              disabled={!selectedAnswerNorm || completingTaskId === activeQuizTask?.taskId}
+              onClick={() => {
+                void handleSubmitTaskQuiz();
+              }}
+            >
+              {completingTaskId === activeQuizTask?.taskId ? '判定中…' : '答えてお世話を完了'}
+            </button>
+          </div>
+        )}
+      </Modal>
     </section>
   );
 }
