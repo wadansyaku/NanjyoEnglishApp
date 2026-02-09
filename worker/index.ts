@@ -277,7 +277,8 @@ const getClientIp = (request: Request) => {
   return 'unknown';
 };
 
-const getAppUrl = (request: Request, env: Env) => env.APP_URL?.trim() || new URL(request.url).origin;
+const getAppUrl = (request: Request, env: Env) =>
+  (env.APP_URL?.trim() || new URL(request.url).origin).replace(/\/+$/g, '');
 
 const ensureAuthRateLimitsTable = async (env: Env) => {
   await dbRun(
@@ -4528,6 +4529,20 @@ const handleCommunityCompleteTask = async (
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    const appBasePath = '/aiyume_english';
+    const legacyUiPrefixes = ['/scan', '/review', '/character', '/settings', '/admin', '/auth', '/test'];
+
+    if (request.method === 'GET') {
+      if (url.pathname === '/') {
+        return Response.redirect(`${url.origin}${appBasePath}/`, 302);
+      }
+      if (url.pathname === appBasePath) {
+        return Response.redirect(`${url.origin}${appBasePath}/`, 302);
+      }
+      if (legacyUiPrefixes.some((prefix) => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`))) {
+        return Response.redirect(`${url.origin}${appBasePath}${url.pathname}${url.search}`, 302);
+      }
+    }
 
     if (url.pathname === '/api/healthz') {
       return jsonResponse({ ok: true });
@@ -4765,6 +4780,13 @@ export default {
 
     if (url.pathname.startsWith('/api/')) {
       return jsonResponse({ ok: false, message: 'Not found.' }, { status: 404 });
+    }
+
+    if (url.pathname === appBasePath || url.pathname.startsWith(`${appBasePath}/`)) {
+      const rewrittenUrl = new URL(request.url);
+      const strippedPath = rewrittenUrl.pathname.slice(appBasePath.length) || '/';
+      rewrittenUrl.pathname = strippedPath.startsWith('/') ? strippedPath : `/${strippedPath}`;
+      return env.ASSETS.fetch(new Request(rewrittenUrl.toString(), request));
     }
 
     return env.ASSETS.fetch(request);

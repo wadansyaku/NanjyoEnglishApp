@@ -3,6 +3,7 @@
 教科書本文の一部を撮影 → OCR → 未知語抽出 → ミニ単語帳 → SRS を1セッションで回すPWAです。
 
 AIYuMeグループの学習部門ブランド名は **AIYuMe Learning**、本アプリ名は **AIYuMe English** です。
+本番URLは `https://ai-yu-me.com/aiyume_english/` を正規導線として運用します。
 
 ## 重要ポリシー（必読）
 
@@ -131,7 +132,7 @@ npx wrangler secret put WORKERS_AI_API_TOKEN
 ## ドメイン / ログイン一元化（ai-yu-me.com）
 
 - Workerルーティング: `wrangler.toml` で `ai-yu-me.com` / `www.ai-yu-me.com` に接続
-- マジックリンクURL: `APP_URL=https://ai-yu-me.com` を使用
+- マジックリンクURL: `APP_URL=https://ai-yu-me.com/aiyume_english` を使用
 - 送信元メールは `RESEND_FROM_EMAIL` を `login@ai-yu-me.com` などに設定
 
 ```bash

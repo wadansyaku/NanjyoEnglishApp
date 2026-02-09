@@ -11,7 +11,8 @@ export default defineConfig({
       manifest: {
         name: 'AIYuMe English',
         short_name: 'AIYuMe',
-        start_url: '/',
+        start_url: '/aiyume_english/',
+        scope: '/aiyume_english/',
         display: 'standalone',
         background_color: '#0f172a',
         theme_color: '#0f172a',
