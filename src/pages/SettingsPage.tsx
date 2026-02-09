@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Modal } from '../components/ui';
 import { Link } from '../lib/router';
 import { type AppSettings } from '../lib/settings';
-import { getAuth, logout, type AuthSession } from '../lib/auth';
+import { AuthApiError, getAuth, linkAccount, logout, type AuthSession } from '../lib/auth';
 import { buildSyncSnapshot } from '../db';
 import { isSyncEnabled, syncPush } from '../lib/sync';
 
@@ -20,6 +20,10 @@ export default function SettingsPage({ settings, onChangeSettings }: SettingsPag
   const [auth, setAuth] = useState<AuthSession | null>(() => getAuth());
   const [syncStatus, setSyncStatus] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const [linkEmail, setLinkEmail] = useState(auth?.email ?? '');
+  const [linkStatus, setLinkStatus] = useState('');
+  const [linking, setLinking] = useState(false);
+  const [linkDevUrl, setLinkDevUrl] = useState('');
 
   const updateSettings = (patch: Partial<AppSettings>) => {
     onChangeSettings({
@@ -58,6 +62,30 @@ export default function SettingsPage({ settings, onChangeSettings }: SettingsPag
   const handleLogout = () => {
     logout();
     setAuth(null);
+  };
+
+  const handleLinkEmail = async () => {
+    const email = linkEmail.trim().toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setLinkStatus('メールアドレスの形式が正しくありません。');
+      return;
+    }
+
+    setLinking(true);
+    setLinkStatus('');
+    setLinkDevUrl('');
+    try {
+      const result = await linkAccount(email);
+      setLinkStatus(result.message || '確認メールを送信しました。');
+      if (result.magicLink) {
+        setLinkDevUrl(result.magicLink);
+      }
+    } catch (error) {
+      const authError = error as AuthApiError;
+      setLinkStatus(authError.message || '連携メールの送信に失敗しました。');
+    } finally {
+      setLinking(false);
+    }
   };
 
   const handleSyncNow = async () => {
@@ -106,6 +134,26 @@ export default function SettingsPage({ settings, onChangeSettings }: SettingsPag
           <>
             <p className="notice">✅ ログイン済み</p>
             <p>メール: {auth.email}</p>
+            <label style={{ marginTop: 12 }}>メール連携 / 変更</label>
+            <p className="counter">変更先に確認リンクを送信します。リンクを開くと切り替わります。</p>
+            <input
+              type="email"
+              value={linkEmail}
+              placeholder="example@email.com"
+              onChange={(event) => setLinkEmail(event.target.value)}
+              disabled={linking}
+            />
+            <div className="scan-inline-actions" style={{ marginTop: 8 }}>
+              <button type="button" className="secondary" onClick={handleLinkEmail} disabled={linking}>
+                {linking ? '送信中…' : '確認メールを送る'}
+              </button>
+            </div>
+            {linkStatus && <p className="counter">{linkStatus}</p>}
+            {linkDevUrl && (
+              <a href={linkDevUrl} className="pill secondary">
+                開発用リンクを開く
+              </a>
+            )}
             <div className="scan-inline-actions" style={{ marginTop: 12 }}>
               <button type="button" onClick={handleSyncNow} disabled={syncing}>
                 {syncing ? '同期中…' : '☁️ 学習データを同期'}

@@ -258,6 +258,141 @@ const parseBoolean = (raw: string | undefined, fallback = false) => {
   return raw === '1' || raw.toLowerCase() === 'true';
 };
 
+const AUTH_RATE_LIMIT = {
+  requestEmailWindowMs: 15 * 60 * 1000,
+  requestEmailLimit: 3,
+  requestIpWindowMs: 15 * 60 * 1000,
+  requestIpLimit: 10,
+  requestCooldownMs: 45 * 1000,
+  verifyIpWindowMs: 15 * 60 * 1000,
+  verifyIpLimit: 60
+} as const;
+
+const getClientIp = (request: Request) => {
+  const cf = request.headers.get('cf-connecting-ip')?.trim();
+  if (cf) return cf;
+  const xff = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+  if (xff) return xff;
+  return 'unknown';
+};
+
+const getAppUrl = (request: Request, env: Env) => env.APP_URL?.trim() || new URL(request.url).origin;
+
+const ensureAuthRateLimitsTable = async (env: Env) => {
+  await dbRun(
+    dbPrepare(
+      env.DB,
+      `CREATE TABLE IF NOT EXISTS auth_rate_limits (
+         limiter_key TEXT NOT NULL,
+         window_start INTEGER NOT NULL,
+         hit_count INTEGER NOT NULL DEFAULT 0,
+         updated_at INTEGER NOT NULL,
+         PRIMARY KEY (limiter_key, window_start)
+       )`
+    )
+  );
+};
+
+const consumeAuthRateLimit = async (
+  env: Env,
+  limiterKey: string,
+  windowMs: number,
+  limit: number
+) => {
+  await ensureAuthRateLimitsTable(env);
+
+  const now = Date.now();
+  const windowStart = Math.floor(now / windowMs) * windowMs;
+  await dbRun(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `INSERT INTO auth_rate_limits (limiter_key, window_start, hit_count, updated_at)
+         VALUES (?1, ?2, 0, ?3)
+         ON CONFLICT(limiter_key, window_start) DO NOTHING`
+      ),
+      limiterKey,
+      windowStart,
+      now
+    )
+  );
+
+  const updateResult = await dbRun(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `UPDATE auth_rate_limits
+         SET hit_count = hit_count + 1,
+             updated_at = ?3
+         WHERE limiter_key = ?1
+           AND window_start = ?2
+           AND hit_count < ?4`
+      ),
+      limiterKey,
+      windowStart,
+      now,
+      limit
+    )
+  );
+  const changes = Number((updateResult as { meta?: { changes?: number } }).meta?.changes ?? 0);
+  if (changes > 0) {
+    return { ok: true as const, retryAfterSec: 0 };
+  }
+  const retryAfterSec = Math.max(1, Math.ceil((windowStart + windowMs - now) / 1000));
+  return { ok: false as const, retryAfterSec };
+};
+
+const getMagicLinkCooldownSeconds = async (env: Env, email: string) => {
+  const now = Date.now();
+  const row = await dbAll<{ created_at: number }>(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `SELECT created_at
+         FROM auth_tokens
+         WHERE email = ?1
+         ORDER BY created_at DESC
+         LIMIT 1`
+      ),
+      email
+    )
+  );
+  const lastCreatedAt = row.results?.[0]?.created_at;
+  if (!lastCreatedAt) return 0;
+  const remainingMs = AUTH_RATE_LIMIT.requestCooldownMs - (now - lastCreatedAt);
+  if (remainingMs <= 0) return 0;
+  return Math.max(1, Math.ceil(remainingMs / 1000));
+};
+
+const maybeCleanupAuthTables = async (env: Env) => {
+  if (Math.random() > 0.05) return;
+  const now = Date.now();
+  const authTokenTtlMs = 7 * 24 * 60 * 60 * 1000;
+  await dbRun(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `DELETE FROM auth_tokens
+         WHERE expires_at < ?1
+            OR (used_at IS NOT NULL AND used_at < ?2)`
+      ),
+      now,
+      now - authTokenTtlMs
+    )
+  );
+  await ensureAuthRateLimitsTable(env);
+  await dbRun(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `DELETE FROM auth_rate_limits
+         WHERE updated_at < ?1`
+      ),
+      now - authTokenTtlMs
+    )
+  );
+};
+
 const GLOBAL_SETTINGS_KEY = 'app_settings_default_v1';
 
 const DEFAULT_GLOBAL_SETTINGS: GlobalAppSettings = {
@@ -959,6 +1094,10 @@ type AuthTokenRow = {
   target_user_id: string | null;
 };
 
+type ConsumeMagicLinkResult =
+  | { ok: true; row: AuthTokenRow }
+  | { ok: false; reason: 'invalid' | 'expired' | 'used' };
+
 const issueMagicLinkToken = async (env: Env, input: {
   email: string;
   purpose: 'signin' | 'link';
@@ -987,7 +1126,10 @@ const issueMagicLinkToken = async (env: Env, input: {
   return rawToken;
 };
 
-const consumeMagicLinkToken = async (env: Env, rawToken: string) => {
+const consumeMagicLinkToken = async (
+  env: Env,
+  rawToken: string
+): Promise<ConsumeMagicLinkResult> => {
   const tokenHash = await hashSha256(rawToken);
   const result = await dbAll<AuthTokenRow>(
     dbBind(
@@ -1001,19 +1143,30 @@ const consumeMagicLinkToken = async (env: Env, rawToken: string) => {
     )
   );
   const row = result.results?.[0];
-  if (!row) return null;
+  if (!row) return { ok: false, reason: 'invalid' };
   const now = Date.now();
-  if (row.used_at) return null;
-  if (row.expires_at < now) return null;
-
-  await dbRun(
+  const updateResult = await dbRun(
     dbBind(
-      dbPrepare(env.DB, 'UPDATE auth_tokens SET used_at = ?1 WHERE token_hash = ?2'),
+      dbPrepare(
+        env.DB,
+        `UPDATE auth_tokens
+         SET used_at = ?1
+         WHERE token_hash = ?2
+           AND used_at IS NULL
+           AND expires_at >= ?1`
+      ),
       now,
-      tokenHash
+      tokenHash,
+      now
     )
   );
-  return row;
+  const changes = Number((updateResult as { meta?: { changes?: number } }).meta?.changes ?? 0);
+  if (changes > 0) {
+    return { ok: true, row };
+  }
+  if (row.used_at) return { ok: false, reason: 'used' };
+  if (row.expires_at < now) return { ok: false, reason: 'expired' };
+  return { ok: false, reason: 'used' };
 };
 
 const createUserWithApiKey = async (env: Env, input: {
@@ -1269,8 +1422,59 @@ const handleRequestMagicLink = async (request: Request, env: Env) => {
     return badRequest('Valid email is required.');
   }
 
+  const clientIp = getClientIp(request);
+  const emailHash = await hashSha256(email);
+  const emailLimiter = await consumeAuthRateLimit(
+    env,
+    `auth:magic:email:${emailHash}`,
+    AUTH_RATE_LIMIT.requestEmailWindowMs,
+    AUTH_RATE_LIMIT.requestEmailLimit
+  );
+  if (!emailLimiter.ok) {
+    return jsonResponse(
+      {
+        ok: false,
+        code: 'RATE_LIMITED_EMAIL',
+        message: '送信回数が上限に達しました。時間をおいて再試行してください。',
+        retryAfter: emailLimiter.retryAfterSec
+      },
+      { status: 429 }
+    );
+  }
+
+  const ipLimiter = await consumeAuthRateLimit(
+    env,
+    `auth:magic:ip:${clientIp}`,
+    AUTH_RATE_LIMIT.requestIpWindowMs,
+    AUTH_RATE_LIMIT.requestIpLimit
+  );
+  if (!ipLimiter.ok) {
+    return jsonResponse(
+      {
+        ok: false,
+        code: 'RATE_LIMITED_IP',
+        message: 'アクセスが集中しています。少し待ってから再試行してください。',
+        retryAfter: ipLimiter.retryAfterSec
+      },
+      { status: 429 }
+    );
+  }
+
+  const cooldownSec = await getMagicLinkCooldownSeconds(env, email);
+  if (cooldownSec > 0) {
+    return jsonResponse(
+      {
+        ok: false,
+        code: 'COOLDOWN',
+        message: '短時間での再送はできません。少し待ってから再試行してください。',
+        retryAfter: cooldownSec
+      },
+      { status: 429 }
+    );
+  }
+
   const token = await issueMagicLinkToken(env, { email, purpose: 'signin' });
-  const appUrl = env.APP_URL?.trim() || 'http://localhost:5173';
+  const appUrl = getAppUrl(request, env);
   const magicLink = `${appUrl}/auth/verify?token=${encodeURIComponent(token)}`;
 
   // Resend APIでメール送信
@@ -1281,7 +1485,7 @@ const handleRequestMagicLink = async (request: Request, env: Env) => {
     if (shouldExposeDevMagicLink(env)) {
       return jsonResponse({
         ok: true,
-        message: 'メール送信に失敗しましたが、開発用リンクを発行しました。',
+        message: 'メール送信に失敗しましたが、開発用リンクを発行しました。再送まで少し待ってください。',
         _dev: { magicLink }
       });
     }
@@ -1297,17 +1501,48 @@ const handleRequestMagicLink = async (request: Request, env: Env) => {
     response._dev = { magicLink };
   }
 
+  await maybeCleanupAuthTables(env);
+
   return jsonResponse(response);
 };
 
 const handleVerifyMagicLink = async (request: Request, env: Env) => {
   const token = new URL(request.url).searchParams.get('token');
   if (!token) return badRequest('Token is required.');
-
-  const tokenRow = await consumeMagicLinkToken(env, token);
-  if (!tokenRow) {
-    return jsonResponse({ ok: false, message: 'Invalid or expired token.' }, { status: 401 });
+  if (!/^[a-f0-9]{64}$/i.test(token)) {
+    return jsonResponse({ ok: false, code: 'TOKEN_INVALID', message: 'Invalid token format.' }, { status: 400 });
   }
+
+  const clientIp = getClientIp(request);
+  const verifyLimiter = await consumeAuthRateLimit(
+    env,
+    `auth:verify:ip:${clientIp}`,
+    AUTH_RATE_LIMIT.verifyIpWindowMs,
+    AUTH_RATE_LIMIT.verifyIpLimit
+  );
+  if (!verifyLimiter.ok) {
+    return jsonResponse(
+      {
+        ok: false,
+        code: 'VERIFY_RATE_LIMITED',
+        message: '認証試行回数が上限に達しました。少し待って再試行してください。',
+        retryAfter: verifyLimiter.retryAfterSec
+      },
+      { status: 429 }
+    );
+  }
+
+  const consumeResult = await consumeMagicLinkToken(env, token);
+  if (!consumeResult.ok) {
+    if (consumeResult.reason === 'expired') {
+      return jsonResponse({ ok: false, code: 'TOKEN_EXPIRED', message: 'リンクの有効期限が切れています。' }, { status: 401 });
+    }
+    if (consumeResult.reason === 'used') {
+      return jsonResponse({ ok: false, code: 'TOKEN_USED', message: 'このリンクは既に使用されています。' }, { status: 401 });
+    }
+    return jsonResponse({ ok: false, code: 'TOKEN_INVALID', message: '無効なリンクです。' }, { status: 401 });
+  }
+  const tokenRow = consumeResult.row;
 
   const now = Date.now();
 
@@ -1415,6 +1650,14 @@ const handleVerifyMagicLink = async (request: Request, env: Env) => {
   }
 
   await ensureUserProfile(env, userId);
+  await dbRun(
+    dbBind(
+      dbPrepare(env.DB, 'UPDATE users SET last_login_at = ?1 WHERE user_id = ?2'),
+      now,
+      userId
+    )
+  );
+  await maybeCleanupAuthTables(env);
 
   return jsonResponse({
     ok: true,
@@ -1492,6 +1735,55 @@ const handleLinkAccount = async (request: Request, env: Env, auth: AuthContext) 
     return badRequest('Valid email is required.');
   }
 
+  const clientIp = getClientIp(request);
+  const emailHash = await hashSha256(email);
+  const emailLimiter = await consumeAuthRateLimit(
+    env,
+    `auth:link:email:${emailHash}`,
+    AUTH_RATE_LIMIT.requestEmailWindowMs,
+    AUTH_RATE_LIMIT.requestEmailLimit
+  );
+  if (!emailLimiter.ok) {
+    return jsonResponse(
+      {
+        ok: false,
+        code: 'RATE_LIMITED_EMAIL',
+        message: '送信回数が上限に達しました。時間をおいて再試行してください。',
+        retryAfter: emailLimiter.retryAfterSec
+      },
+      { status: 429 }
+    );
+  }
+  const ipLimiter = await consumeAuthRateLimit(
+    env,
+    `auth:link:ip:${clientIp}`,
+    AUTH_RATE_LIMIT.requestIpWindowMs,
+    AUTH_RATE_LIMIT.requestIpLimit
+  );
+  if (!ipLimiter.ok) {
+    return jsonResponse(
+      {
+        ok: false,
+        code: 'RATE_LIMITED_IP',
+        message: 'アクセスが集中しています。少し待ってから再試行してください。',
+        retryAfter: ipLimiter.retryAfterSec
+      },
+      { status: 429 }
+    );
+  }
+  const cooldownSec = await getMagicLinkCooldownSeconds(env, email);
+  if (cooldownSec > 0) {
+    return jsonResponse(
+      {
+        ok: false,
+        code: 'COOLDOWN',
+        message: '短時間での再送はできません。少し待ってから再試行してください。',
+        retryAfter: cooldownSec
+      },
+      { status: 429 }
+    );
+  }
+
   const duplicate = await dbAll<{ user_id: string }>(
     dbBind(
       dbPrepare(
@@ -1514,7 +1806,7 @@ const handleLinkAccount = async (request: Request, env: Env, auth: AuthContext) 
     purpose: 'link',
     targetUserId: auth.userId
   });
-  const appUrl = env.APP_URL?.trim() || 'http://localhost:5173';
+  const appUrl = getAppUrl(request, env);
   const magicLink = `${appUrl}/auth/verify?token=${encodeURIComponent(token)}`;
 
   // Resend APIでメール送信
@@ -1538,6 +1830,8 @@ const handleLinkAccount = async (request: Request, env: Env, auth: AuthContext) 
   if (shouldExposeDevMagicLink(env)) {
     response._dev = { magicLink };
   }
+
+  await maybeCleanupAuthTables(env);
 
   return jsonResponse(response);
 };

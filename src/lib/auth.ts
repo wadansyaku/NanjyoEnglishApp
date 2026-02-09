@@ -12,6 +12,18 @@ export type AuthSession = {
 };
 
 const STORAGE_KEY = 'nanjyo.auth.v2';
+const PENDING_EMAIL_KEY = 'nanjyo.auth.pending_email.v1';
+
+export class AuthApiError extends Error {
+  code?: string;
+  retryAfter?: number;
+
+  constructor(message: string, options?: { code?: string; retryAfter?: number }) {
+    super(message);
+    this.code = options?.code;
+    this.retryAfter = options?.retryAfter;
+  }
+}
 
 const loadAuth = (): AuthSession | null => {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -31,6 +43,16 @@ const saveAuth = (session: AuthSession) => {
 
 const clearAuth = () => {
   localStorage.removeItem(STORAGE_KEY);
+};
+
+const savePendingEmail = (email: string) => {
+  localStorage.setItem(PENDING_EMAIL_KEY, email);
+};
+
+export const getPendingEmail = () => localStorage.getItem(PENDING_EMAIL_KEY) ?? '';
+
+const clearPendingEmail = () => {
+  localStorage.removeItem(PENDING_EMAIL_KEY);
 };
 
 // Migrate from v1 storage format
@@ -109,7 +131,24 @@ export const requestMagicLink = async (email: string): Promise<{ ok: boolean; me
     body: JSON.stringify({ email })
   });
 
-  const data = await response.json() as { ok: boolean; message: string; _dev?: { magicLink: string } };
+  const data = await response.json() as {
+    ok: boolean;
+    message: string;
+    code?: string;
+    retryAfter?: number;
+    _dev?: { magicLink: string };
+  };
+
+  if (!response.ok) {
+    throw new AuthApiError(data.message || 'マジックリンク送信に失敗しました。', {
+      code: data.code,
+      retryAfter: data.retryAfter
+    });
+  }
+
+  if (data.ok) {
+    savePendingEmail(email.trim().toLowerCase());
+  }
 
   return {
     ok: data.ok,
@@ -125,8 +164,11 @@ export const verifyMagicLink = async (token: string): Promise<AuthSession> => {
   const response = await fetch(`/api/v1/auth/verify-magic-link?token=${encodeURIComponent(token)}`);
 
   if (!response.ok) {
-    const data = await response.json() as { message: string };
-    throw new Error(data.message || 'Verification failed');
+    const data = await response.json() as { message?: string; code?: string; retryAfter?: number };
+    throw new AuthApiError(data.message || '認証に失敗しました。', {
+      code: data.code,
+      retryAfter: data.retryAfter
+    });
   }
 
   const data = await response.json() as {
@@ -147,6 +189,7 @@ export const verifyMagicLink = async (token: string): Promise<AuthSession> => {
   };
 
   saveAuth(session);
+  clearPendingEmail();
   return session;
 };
 
@@ -201,7 +244,24 @@ export const linkAccount = async (email: string): Promise<{ ok: boolean; message
     body: JSON.stringify({ email })
   });
 
-  const data = await response.json() as { ok: boolean; message: string; _dev?: { magicLink: string } };
+  const data = await response.json() as {
+    ok: boolean;
+    message: string;
+    code?: string;
+    retryAfter?: number;
+    _dev?: { magicLink: string };
+  };
+
+  if (!response.ok) {
+    throw new AuthApiError(data.message || 'リンク送信に失敗しました。', {
+      code: data.code,
+      retryAfter: data.retryAfter
+    });
+  }
+
+  if (data.ok) {
+    savePendingEmail(email.trim().toLowerCase());
+  }
 
   return {
     ok: data.ok,
@@ -215,6 +275,7 @@ export const linkAccount = async (email: string): Promise<{ ok: boolean; message
  */
 export const logout = () => {
   clearAuth();
+  clearPendingEmail();
 };
 
 /**

@@ -157,6 +157,26 @@ main {
   box-shadow: var(--shadow-soft);
 }
 
+/* ========================================
+   Auth
+   ======================================== */
+
+.auth-card {
+  max-width: 560px;
+  margin-inline: auto;
+}
+
+.auth-form-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.auth-footnote {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+}
+
 .toast-info {
   background: linear-gradient(135deg, #6ea9e5, #588ec6);
 }

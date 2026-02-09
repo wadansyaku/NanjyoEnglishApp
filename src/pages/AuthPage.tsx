@@ -1,127 +1,152 @@
-/**
- * 認証ページ - マジックリンクログイン/サインアップ
- */
-import { useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link } from '../lib/router';
-import { getAuth, requestMagicLink } from '../lib/auth';
+import { AuthApiError, getAuth, requestMagicLink } from '../lib/auth';
 
 type AuthPageProps = {
-    navigate: (to: string) => void;
+  navigate: (to: string) => void;
 };
 
+const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+
 export const AuthPage = ({ navigate }: AuthPageProps) => {
-    const [email, setEmail] = useState('');
-    const [status, setStatus] = useState<'idle' | 'loading' | 'sent' | 'error'>('idle');
-    const [message, setMessage] = useState('');
-    const [devLink, setDevLink] = useState('');
+  const auth = getAuth();
 
-    const auth = getAuth();
+  const [email, setEmail] = useState(auth?.email ?? '');
+  const [sent, setSent] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [devLink, setDevLink] = useState('');
+  const [cooldownSec, setCooldownSec] = useState(0);
 
-    const handleSubmit = async (e: FormEvent) => {
-        e.preventDefault();
-        if (!email.trim()) return;
+  const normalizedEmail = email.trim().toLowerCase();
+  const canSubmit = useMemo(
+    () => isValidEmail(normalizedEmail) && !sending && cooldownSec <= 0,
+    [normalizedEmail, sending, cooldownSec]
+  );
 
-        setStatus('loading');
-        setDevLink('');
+  useEffect(() => {
+    if (cooldownSec <= 0) return;
+    const timer = window.setInterval(() => {
+      setCooldownSec((prev) => (prev <= 1 ? 0 : prev - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [cooldownSec]);
 
-        try {
-            const result = await requestMagicLink(email.trim());
-            if (result.ok) {
-                setStatus('sent');
-                setMessage(result.message);
-                if (result.magicLink) {
-                    setDevLink(result.magicLink);
-                }
-            } else {
-                setStatus('error');
-                setMessage(result.message);
-            }
-        } catch {
-            setStatus('error');
-            setMessage('通信エラーが発生しました');
-        }
-    };
-
-    if (auth?.isEmailVerified) {
-        return (
-            <div className="page auth-page">
-                <h1>👋 すでにログインしています</h1>
-                <p>メールアドレス: {auth.email}</p>
-                <Link to="/settings" className="pill primary">
-                    ⚙️ 設定に戻る
-                </Link>
-            </div>
-        );
+  const submit = async (targetEmail: string) => {
+    if (!isValidEmail(targetEmail)) {
+      setError('メールアドレスの形式が正しくありません。');
+      return;
     }
 
-    if (status === 'sent') {
-        return (
-            <div className="page auth-page">
-                <h1>📧 メールを確認してね！</h1>
-                <p>{message}</p>
-                <p className="hint">
-                    メールに届いたリンクをタップしてログインしてね
-                </p>
-
-                {devLink && (
-                    <div className="dev-section">
-                        <p className="dev-label">🔧 開発モード:</p>
-                        <a href={devLink} className="pill secondary">
-                            マジックリンクを開く
-                        </a>
-                    </div>
-                )}
-
-                <button
-                    className="pill ghost"
-                    onClick={() => setStatus('idle')}
-                >
-                    ← やり直す
-                </button>
-            </div>
-        );
+    setSending(true);
+    setError('');
+    setMessage('');
+    setDevLink('');
+    try {
+      const result = await requestMagicLink(targetEmail);
+      setSent(true);
+      setMessage(result.message);
+      setDevLink(result.magicLink ?? '');
+      setCooldownSec(45);
+    } catch (err) {
+      const apiError = err as AuthApiError;
+      setError(apiError.message || '通信エラーが発生しました。');
+      if (typeof apiError.retryAfter === 'number' && apiError.retryAfter > 0) {
+        setCooldownSec(apiError.retryAfter);
+      }
+    } finally {
+      setSending(false);
     }
+  };
 
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault();
+    await submit(normalizedEmail);
+  };
+
+  if (auth?.isEmailVerified) {
     return (
-        <div className="page auth-page">
-            <h1>🔐 ログイン / 新規登録</h1>
-            <p className="subtitle">
-                メールアドレスを入力してね。
-                <br />
-                パスワードは不要！メールに届くリンクでログインできるよ。
-            </p>
-
-            <form onSubmit={handleSubmit} className="auth-form">
-                <input
-                    type="email"
-                    placeholder="example@email.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    disabled={status === 'loading'}
-                    autoComplete="email"
-                    autoFocus
-                />
-
-                <button
-                    type="submit"
-                    className="pill primary"
-                    disabled={status === 'loading' || !email.trim()}
-                >
-                    {status === 'loading' ? '送信中...' : '📨 ログインリンクを送る'}
-                </button>
-            </form>
-
-            {status === 'error' && (
-                <p className="error-message">{message}</p>
-            )}
-
-            <div className="auth-footer">
-                <button className="pill ghost" onClick={() => navigate('/review')}>
-                    あとでログインする →
-                </button>
-            </div>
+      <section className="section-grid">
+        <div className="card auth-card">
+          <h2>✅ ログイン済み</h2>
+          <p className="counter">{auth.email}</p>
+          <div className="scan-inline-actions" style={{ marginTop: 12 }}>
+            <Link to="/settings" className="pill">設定へ戻る</Link>
+            <button type="button" className="secondary" onClick={() => navigate('/review')}>
+              復習へ進む
+            </button>
+          </div>
         </div>
+      </section>
     );
+  }
+
+  return (
+    <section className="section-grid">
+      <div className="card auth-card">
+        <h2>🔐 ログイン / 新規登録</h2>
+        <p className="notice">
+          メールに届くリンクでログインします。パスワードは不要です。
+        </p>
+
+        <form onSubmit={handleSubmit} className="auth-form-grid">
+          <label htmlFor="email-input">メールアドレス</label>
+          <input
+            id="email-input"
+            type="email"
+            autoComplete="email"
+            placeholder="example@email.com"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            disabled={sending}
+          />
+          <button type="submit" disabled={!canSubmit}>
+            {sending ? '送信中…' : 'ログインリンクを送る'}
+          </button>
+        </form>
+
+        {cooldownSec > 0 && (
+          <p className="counter">再送まで {cooldownSec} 秒</p>
+        )}
+        {error && <p className="counter">{error}</p>}
+
+        {sent && (
+          <div className="cut-candidate-box" style={{ marginTop: 12 }}>
+            <p className="counter">{message || 'メールを送信しました。'}</p>
+            <p className="candidate-meta">
+              メールのリンクを開くとログインが完了します。
+            </p>
+            <div className="scan-inline-actions" style={{ marginTop: 8 }}>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => void submit(normalizedEmail)}
+                disabled={cooldownSec > 0 || sending}
+              >
+                再送する
+              </button>
+              <button type="button" className="secondary" onClick={() => setSent(false)}>
+                入力をやり直す
+              </button>
+            </div>
+            {devLink && (
+              <a href={devLink} className="pill" style={{ marginTop: 8 }}>
+                開発用リンクを開く
+              </a>
+            )}
+          </div>
+        )}
+
+        <div className="auth-footnote">
+          <button type="button" className="pill secondary" onClick={() => navigate('/review')}>
+            あとでログインする
+          </button>
+        </div>
+      </div>
+    </section>
+  );
 };
 
 export default AuthPage;
+
