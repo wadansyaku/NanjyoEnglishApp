@@ -132,16 +132,16 @@ npx wrangler secret put WORKERS_AI_API_TOKEN
 ## ドメイン / ログイン一元化（ai-yu-me.com）
 
 - Workerルーティング: `wrangler.toml` で `ai-yu-me.com` / `www.ai-yu-me.com` に接続
-- マジックリンクURL: `APP_URL=https://ai-yu-me.com/aiyume_english` を使用
-- 送信元メールは `RESEND_FROM_EMAIL` を `login@ai-yu-me.com` などに設定
+- Passkey認証のRP Origin判定に `APP_URL=https://ai-yu-me.com/aiyume_english` を使用
+- （任意）メール連携を使う場合は `RESEND_FROM_EMAIL` を `login@ai-yu-me.com` などに設定
 
 ```bash
 npx wrangler secret put RESEND_API_KEY
 npx wrangler secret put RESEND_FROM_EMAIL
 ```
 
-Resend側で `ai-yu-me.com` ドメイン認証（SPF/DKIM）を済ませてから運用してください。
-`/api/healthz` の `mail.configured` が `true` になっていることを確認してください。
+メール連携を有効化する場合は、Resend側で `ai-yu-me.com` ドメイン認証（SPF/DKIM）を済ませて運用してください。
+`/api/healthz` の `mail.configured` が `true` であればメール送信の準備完了です。
 
 ## アーキテクチャ
 
@@ -229,41 +229,48 @@ Resend側で `ai-yu-me.com` ドメイン認証（SPF/DKIM）を済ませてか�
 
 ## 認証
 
-- 初回 `POST /api/v1/bootstrap` で `userId` / `apiKey` 発行
+- デフォルトは Passkey（WebAuthn）
 - 以後 `/api/v1/*` は `Authorization: Bearer <apiKey>`
 - サーバ側は `apiKey` のSHA-256ハッシュのみ保持
 - 認証キーは `auth_sessions` で端末ごとに管理（同時ログインしても他端末を失効させない）
-- メールログインはマジックリンク方式（パスワード不要）
 - セキュリティ強化:
-  - マジックリンク送信は「IP / メール」単位でレート制限
-  - 短時間の連続再送をクールダウンでブロック
-  - トークンは1回のみ使用可（原子的に消費）
-  - 検証試行にもIPレート制限を適用
-  - 期限切れ/使用済み/不正トークンを明確に判定
+  - Passkey challenge は短期TTL + 1回のみ使用可
+  - challenge発行はIP単位レート制限
+  - 署名検証は Origin / RP Domain / counter を検証
   - `POST /api/v1/auth/logout` で現在端末セッションのみ失効
+- メール方式は任意の補助導線として残置（運用時はResend設定が必要）
 
 ## API
 
-### 1) `POST /api/v1/auth/request-magic-link`
+### 1) `POST /api/v1/auth/passkey/register/options`
 
-- 入力: `{ email }`
-- 出力: `ok/message`（開発時は `_dev.magicLink` が返る場合あり）
-- 429時は `retryAfter` を返却
+- 入力: `{ displayName? }`
+- 出力: `{ challengeId, options }`
 
-### 2) `GET /api/v1/auth/verify-magic-link?token=...`
+### 2) `POST /api/v1/auth/passkey/register/verify`
 
-- トークン検証してログイン完了
-- 失敗時は `code`（`TOKEN_EXPIRED` / `TOKEN_USED` など）を返す
+- 入力: `{ challengeId, registration }`
+- Passkey登録完了 + セッション発行
 
-### 3) `POST /api/v1/auth/link-account`
+### 3) `POST /api/v1/auth/passkey/login/options`
+
+- 入力: `{}`
+- 出力: `{ challengeId, options }`
+
+### 4) `POST /api/v1/auth/passkey/login/verify`
+
+- 入力: `{ challengeId, authentication }`
+- Passkeyログイン完了 + セッション発行
+
+### 5) `POST /api/v1/auth/link-account`
 
 - 既存ユーザーのメール連携/変更用リンクを送信
 
-### 4) `POST /api/v1/auth/logout`
+### 6) `POST /api/v1/auth/logout`
 
 - 現在のBearerセッションのみを失効
 
-### 5) `POST /api/v1/lexemes/lookup`
+### 7) `POST /api/v1/lexemes/lookup`
 
 - 入力: `{ headwords: string[] }`
 - 出力: `{ found: [...], missing: [...] }`
@@ -272,7 +279,7 @@ Resend側で `ai-yu-me.com` ドメイン認証（SPF/DKIM）を済ませてか�
   2. `core_words`
   3. `lexemes` (legacy)
 
-### 6) `POST /api/v1/lexemes/commit`
+### 8) `POST /api/v1/lexemes/commit`
 
 - 入力: `{ entries: [{ headword, meaningJa, exampleEn?, note? }] }`
 - 出力: `{ ok: true, inserted: number }`
@@ -283,7 +290,7 @@ Resend側で `ai-yu-me.com` ドメイン認証（SPF/DKIM）を済ませてか�
 - `exampleEn` / `note` 160文字以内
 - 改行は拒否
 
-### 7) `POST /api/v1/ocr/cloud`
+### 9) `POST /api/v1/ocr/cloud`
 
 - 入力:
 

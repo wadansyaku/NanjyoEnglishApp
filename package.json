@@ -16,6 +16,7 @@
     "wordbank:seed:remote": "node scripts/seed-core-wordbank.mjs --remote"
   },
   "dependencies": {
+    "@passwordless-id/webauthn": "^2.3.1",
     "dexie": "^3.2.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

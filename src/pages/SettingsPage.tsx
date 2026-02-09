@@ -142,27 +142,33 @@ export default function SettingsPage({ settings, onChangeSettings }: SettingsPag
         {auth?.isEmailVerified ? (
           <>
             <p className="notice">✅ ログイン済み</p>
-            <p>メール: {auth.email}</p>
-            <label style={{ marginTop: 12 }}>メール連携 / 変更</label>
-            <p className="counter">変更先に確認リンクを送信します。リンクを開くと切り替わります。</p>
-            <input
-              type="email"
-              value={linkEmail}
-              placeholder="example@email.com"
-              onChange={(event) => setLinkEmail(event.target.value)}
-              disabled={linking}
-            />
-            <div className="scan-inline-actions" style={{ marginTop: 8 }}>
-              <button type="button" className="secondary" onClick={handleLinkEmail} disabled={linking}>
-                {linking ? '送信中…' : '確認メールを送る'}
-              </button>
-            </div>
-            {linkStatus && <p className="counter">{linkStatus}</p>}
-            {linkDevUrl && (
-              <a href={linkDevUrl} className="pill secondary">
-                開発用リンクを開く
-              </a>
+            {auth.authMethod === 'passkey' ? (
+              <p>方式: Passkey（推奨）</p>
+            ) : (
+              <p>メール: {auth.email}</p>
             )}
+            <details style={{ marginTop: 12 }}>
+              <summary>メール連携（任意）</summary>
+              <p className="counter">確認リンクを送信します。リンクを開くと切り替わります。</p>
+              <input
+                type="email"
+                value={linkEmail}
+                placeholder="example@email.com"
+                onChange={(event) => setLinkEmail(event.target.value)}
+                disabled={linking}
+              />
+              <div className="scan-inline-actions" style={{ marginTop: 8 }}>
+                <button type="button" className="secondary" onClick={handleLinkEmail} disabled={linking}>
+                  {linking ? '送信中…' : '確認メールを送る'}
+                </button>
+              </div>
+              {linkStatus && <p className="counter">{linkStatus}</p>}
+              {linkDevUrl && (
+                <a href={linkDevUrl} className="pill secondary">
+                  開発用リンクを開く
+                </a>
+              )}
+            </details>
             <div className="scan-inline-actions" style={{ marginTop: 12 }}>
               <button type="button" onClick={handleSyncNow} disabled={syncing}>
                 {syncing ? '同期中…' : '☁️ 学習データを同期'}

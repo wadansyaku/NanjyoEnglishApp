@@ -1,5 +1,6 @@
 import { dbAll, dbBind, dbPrepare, dbRun } from './db';
 import { normalizeHeadword } from '../shared/headword';
+import { server as webauthnServer } from '@passwordless-id/webauthn';
 
 export interface Env {
   DB: D1Database;
@@ -37,6 +38,20 @@ type MagicLinkRequest = {
 
 type LinkAccountRequest = {
   email: string;
+};
+
+type PasskeyRegisterOptionsRequest = {
+  displayName?: string;
+};
+
+type PasskeyRegisterVerifyRequest = {
+  challengeId: string;
+  registration: unknown;
+};
+
+type PasskeyLoginVerifyRequest = {
+  challengeId: string;
+  authentication: unknown;
 };
 
 type LookupRequest = {
@@ -406,6 +421,19 @@ const maybeCleanupAuthTables = async (env: Env) => {
       now - authTokenTtlMs
     )
   );
+  await ensurePasskeyTables(env);
+  await dbRun(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `DELETE FROM auth_passkey_challenges
+         WHERE expires_at < ?1
+            OR (used_at IS NOT NULL AND used_at < ?2)`
+      ),
+      now,
+      now - authTokenTtlMs
+    )
+  );
 };
 
 const GLOBAL_SETTINGS_KEY = 'app_settings_default_v1';
@@ -555,6 +583,160 @@ const ensureAuthSessionsTable = async (env: Env) => {
       'CREATE INDEX IF NOT EXISTS idx_auth_sessions_active ON auth_sessions(api_key_hash, revoked_at, expires_at)'
     )
   );
+};
+
+const ensurePasskeyTables = async (env: Env) => {
+  await dbRun(
+    dbPrepare(
+      env.DB,
+      `CREATE TABLE IF NOT EXISTS auth_passkeys (
+         credential_id TEXT PRIMARY KEY,
+         user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+         public_key TEXT NOT NULL,
+         algorithm TEXT NOT NULL,
+         transports_json TEXT NOT NULL DEFAULT '[]',
+         counter INTEGER NOT NULL DEFAULT 0,
+         created_at INTEGER NOT NULL,
+         last_used_at INTEGER NOT NULL
+       )`
+    )
+  );
+  await dbRun(
+    dbPrepare(
+      env.DB,
+      `CREATE INDEX IF NOT EXISTS idx_auth_passkeys_user
+       ON auth_passkeys(user_id)`
+    )
+  );
+  await dbRun(
+    dbPrepare(
+      env.DB,
+      `CREATE TABLE IF NOT EXISTS auth_passkey_challenges (
+         challenge_id TEXT PRIMARY KEY,
+         challenge TEXT NOT NULL,
+         purpose TEXT NOT NULL,
+         user_id TEXT,
+         display_name TEXT,
+         created_at INTEGER NOT NULL,
+         expires_at INTEGER NOT NULL,
+         used_at INTEGER
+       )`
+    )
+  );
+  await dbRun(
+    dbPrepare(
+      env.DB,
+      `CREATE INDEX IF NOT EXISTS idx_auth_passkey_challenges_expires
+       ON auth_passkey_challenges(expires_at, used_at)`
+    )
+  );
+};
+
+const getExpectedPasskeyOrigin = (request: Request, env: Env) => {
+  try {
+    return new URL(getAppUrl(request, env)).origin;
+  } catch {
+    return new URL(request.url).origin;
+  }
+};
+
+const getExpectedPasskeyDomain = (request: Request, env: Env) => {
+  try {
+    return new URL(getAppUrl(request, env)).hostname;
+  } catch {
+    return new URL(request.url).hostname;
+  }
+};
+
+const issuePasskeyChallenge = async (
+  env: Env,
+  input: {
+    purpose: 'register' | 'login';
+    userId?: string;
+    displayName?: string;
+  }
+) => {
+  await ensurePasskeyTables(env);
+  const challengeId = crypto.randomUUID();
+  const challenge = webauthnServer.randomChallenge();
+  const now = Date.now();
+  await dbRun(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `INSERT INTO auth_passkey_challenges (
+           challenge_id, challenge, purpose, user_id, display_name, created_at, expires_at, used_at
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)`
+      ),
+      challengeId,
+      challenge,
+      input.purpose,
+      input.userId ?? null,
+      input.displayName ?? null,
+      now,
+      now + PASSKEY_CHALLENGE_EXPIRY_MS
+    )
+  );
+  return { challengeId, challenge };
+};
+
+const consumePasskeyChallenge = async (
+  env: Env,
+  challengeId: string,
+  purpose: 'register' | 'login'
+) => {
+  await ensurePasskeyTables(env);
+  const now = Date.now();
+  const rowResult = await dbAll<{
+    challenge: string;
+    purpose: string;
+    user_id: string | null;
+    display_name: string | null;
+    expires_at: number;
+    used_at: number | null;
+  }>(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `SELECT challenge, purpose, user_id, display_name, expires_at, used_at
+         FROM auth_passkey_challenges
+         WHERE challenge_id = ?1
+         LIMIT 1`
+      ),
+      challengeId
+    )
+  );
+  const row = rowResult.results?.[0];
+  if (!row) return { ok: false as const, reason: 'invalid' as const };
+  if (row.purpose !== purpose) return { ok: false as const, reason: 'purpose' as const };
+
+  const updateResult = await dbRun(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `UPDATE auth_passkey_challenges
+         SET used_at = ?1
+         WHERE challenge_id = ?2
+           AND used_at IS NULL
+           AND expires_at >= ?1`
+      ),
+      now,
+      challengeId
+    )
+  );
+  const changes = Number((updateResult as { meta?: { changes?: number } }).meta?.changes ?? 0);
+  if (changes <= 0) {
+    if (row.used_at) return { ok: false as const, reason: 'used' as const };
+    if (row.expires_at < now) return { ok: false as const, reason: 'expired' as const };
+    return { ok: false as const, reason: 'invalid' as const };
+  }
+  return {
+    ok: true as const,
+    challenge: row.challenge,
+    userId: row.user_id,
+    displayName: row.display_name
+  };
 };
 
 const requireAuth = async (request: Request, env: Env): Promise<AuthContext | null> => {
@@ -1197,6 +1379,7 @@ const shouldExposeDevMagicLink = (env: Env) => parseBoolean(env.ALLOW_DEV_MAGIC_
 
 const MAGIC_LINK_EXPIRY_MS = 15 * 60 * 1000;
 const AUTH_SESSION_TTL_MS = 180 * 24 * 60 * 60 * 1000;
+const PASSKEY_CHALLENGE_EXPIRY_MS = 5 * 60 * 1000;
 
 type AuthTokenRow = {
   email: string;
@@ -1282,10 +1465,11 @@ const consumeMagicLinkToken = async (
 };
 
 const createUserRecord = async (env: Env, input: {
+  userId?: string;
   email?: string | null;
   emailVerifiedAt?: number | null;
 }) => {
-  const userId = crypto.randomUUID();
+  const userId = input.userId?.trim() || crypto.randomUUID();
   const avatarSeed = randomToken(8);
   const createdAt = Date.now();
 
@@ -1533,6 +1717,371 @@ const handleBootstrap = async (env: Env) => {
     userId: user.userId,
     apiKey: session.apiKey,
     avatarSeed: user.avatarSeed
+  });
+};
+
+const handlePasskeyRegisterOptions = async (request: Request, env: Env) => {
+  let body: PasskeyRegisterOptionsRequest = {};
+  try {
+    body = await request.json();
+  } catch {
+    // optional payload
+  }
+
+  const clientIp = getClientIp(request);
+  const ipLimiter = await consumeAuthRateLimit(
+    env,
+    `auth:passkey:register:ip:${clientIp}`,
+    AUTH_RATE_LIMIT.requestIpWindowMs,
+    AUTH_RATE_LIMIT.requestIpLimit
+  );
+  if (!ipLimiter.ok) {
+    return jsonResponse(
+      {
+        ok: false,
+        code: 'RATE_LIMITED_IP',
+        message: 'アクセスが集中しています。少し待ってから再試行してください。',
+        retryAfter: ipLimiter.retryAfterSec
+      },
+      { status: 429 }
+    );
+  }
+
+  const displayNameInput = sanitizeSingleLine(body.displayName ?? '');
+  const displayName = (displayNameInput || 'AIYuMe User').slice(0, 32);
+  const pendingUserId = crypto.randomUUID();
+
+  const { challengeId, challenge } = await issuePasskeyChallenge(env, {
+    purpose: 'register',
+    userId: pendingUserId,
+    displayName
+  });
+
+  return jsonResponse({
+    ok: true,
+    challengeId,
+    options: {
+      challenge,
+      domain: getExpectedPasskeyDomain(request, env),
+      user: {
+        id: pendingUserId,
+        name: `user-${pendingUserId.slice(0, 8)}`,
+        displayName
+      },
+      timeout: 60_000,
+      userVerification: 'required',
+      discoverable: 'required',
+      hints: ['client-device', 'hybrid', 'security-key']
+    }
+  });
+};
+
+const handlePasskeyRegisterVerify = async (request: Request, env: Env) => {
+  let body: PasskeyRegisterVerifyRequest;
+  try {
+    body = await request.json();
+  } catch {
+    return badRequest('Invalid JSON.');
+  }
+
+  const challengeId = sanitizeSingleLine(body.challengeId ?? '');
+  if (!challengeId) {
+    return badRequest('challengeId is required.');
+  }
+  if (!body.registration || typeof body.registration !== 'object') {
+    return badRequest('registration is required.');
+  }
+
+  const consumed = await consumePasskeyChallenge(env, challengeId, 'register');
+  if (!consumed.ok) {
+    if (consumed.reason === 'expired') {
+      return jsonResponse({ ok: false, code: 'PASSKEY_CHALLENGE_EXPIRED', message: '認証の有効期限が切れました。もう一度お試しください。' }, { status: 401 });
+    }
+    if (consumed.reason === 'used') {
+      return jsonResponse({ ok: false, code: 'PASSKEY_CHALLENGE_USED', message: 'この登録セッションは既に使用されています。' }, { status: 401 });
+    }
+    return badRequest('Invalid registration challenge.');
+  }
+
+  let registrationInfo: Awaited<ReturnType<typeof webauthnServer.verifyRegistration>>;
+  try {
+    registrationInfo = await webauthnServer.verifyRegistration(
+      body.registration as Parameters<typeof webauthnServer.verifyRegistration>[0],
+      {
+        challenge: consumed.challenge,
+        origin: getExpectedPasskeyOrigin(request, env)
+      }
+    );
+  } catch (error) {
+    return badRequest(`Passkey registration verification failed: ${(error as Error).message}`);
+  }
+
+  if (!registrationInfo.userVerified) {
+    return badRequest('端末で本人確認が完了していません。');
+  }
+  if (registrationInfo.credential.algorithm !== 'ES256' && registrationInfo.credential.algorithm !== 'RS256') {
+    return badRequest('このPasskey方式は現在サポートされていません。');
+  }
+
+  await ensurePasskeyTables(env);
+
+  const existingCredential = await dbAll<{ credential_id: string }>(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `SELECT credential_id
+         FROM auth_passkeys
+         WHERE credential_id = ?1
+         LIMIT 1`
+      ),
+      registrationInfo.credential.id
+    )
+  );
+  if (existingCredential.results?.[0]) {
+    return badRequest('このPasskeyは既に登録されています。ログインしてください。');
+  }
+
+  const userId = consumed.userId?.trim() || registrationInfo.user.id || crypto.randomUUID();
+  const existingUser = await dbAll<{ user_id: string; avatar_seed: string; email: string | null }>(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `SELECT user_id, avatar_seed, email
+         FROM users
+         WHERE user_id = ?1
+         LIMIT 1`
+      ),
+      userId
+    )
+  );
+
+  let avatarSeed = existingUser.results?.[0]?.avatar_seed ?? '';
+  const isNewUser = !existingUser.results?.[0];
+  if (!existingUser.results?.[0]) {
+    const created = await createUserRecord(env, {
+      userId,
+      email: null,
+      emailVerifiedAt: null
+    });
+    avatarSeed = created.avatarSeed;
+  }
+
+  const now = Date.now();
+  await dbRun(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `INSERT INTO auth_passkeys (
+           credential_id, user_id, public_key, algorithm, transports_json, counter, created_at, last_used_at
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)`
+      ),
+      registrationInfo.credential.id,
+      userId,
+      registrationInfo.credential.publicKey,
+      registrationInfo.credential.algorithm,
+      JSON.stringify(registrationInfo.credential.transports ?? []),
+      registrationInfo.authenticator.counter ?? 0,
+      now
+    )
+  );
+
+  await dbRun(
+    dbBind(
+      dbPrepare(env.DB, 'UPDATE users SET last_login_at = ?1 WHERE user_id = ?2'),
+      now,
+      userId
+    )
+  );
+
+  const session = await createAuthSession(env, userId);
+  await maybeCleanupAuthTables(env);
+
+  return jsonResponse({
+    ok: true,
+    userId,
+    apiKey: session.apiKey,
+    avatarSeed,
+    email: existingUser.results?.[0]?.email ?? null,
+    isNewUser,
+    mode: 'passkey'
+  });
+};
+
+const handlePasskeyLoginOptions = async (request: Request, env: Env) => {
+  const clientIp = getClientIp(request);
+  const ipLimiter = await consumeAuthRateLimit(
+    env,
+    `auth:passkey:login:ip:${clientIp}`,
+    AUTH_RATE_LIMIT.requestIpWindowMs,
+    AUTH_RATE_LIMIT.requestIpLimit * 3
+  );
+  if (!ipLimiter.ok) {
+    return jsonResponse(
+      {
+        ok: false,
+        code: 'RATE_LIMITED_IP',
+        message: 'アクセスが集中しています。少し待ってから再試行してください。',
+        retryAfter: ipLimiter.retryAfterSec
+      },
+      { status: 429 }
+    );
+  }
+
+  const { challengeId, challenge } = await issuePasskeyChallenge(env, {
+    purpose: 'login'
+  });
+
+  return jsonResponse({
+    ok: true,
+    challengeId,
+    options: {
+      challenge,
+      domain: getExpectedPasskeyDomain(request, env),
+      timeout: 60_000,
+      userVerification: 'required',
+      hints: ['client-device', 'hybrid', 'security-key']
+    }
+  });
+};
+
+const handlePasskeyLoginVerify = async (request: Request, env: Env) => {
+  let body: PasskeyLoginVerifyRequest;
+  try {
+    body = await request.json();
+  } catch {
+    return badRequest('Invalid JSON.');
+  }
+
+  const challengeId = sanitizeSingleLine(body.challengeId ?? '');
+  if (!challengeId) {
+    return badRequest('challengeId is required.');
+  }
+  if (!body.authentication || typeof body.authentication !== 'object') {
+    return badRequest('authentication is required.');
+  }
+
+  const consumed = await consumePasskeyChallenge(env, challengeId, 'login');
+  if (!consumed.ok) {
+    if (consumed.reason === 'expired') {
+      return jsonResponse({ ok: false, code: 'PASSKEY_CHALLENGE_EXPIRED', message: '認証の有効期限が切れました。もう一度お試しください。' }, { status: 401 });
+    }
+    if (consumed.reason === 'used') {
+      return jsonResponse({ ok: false, code: 'PASSKEY_CHALLENGE_USED', message: 'このログインセッションは既に使用されています。' }, { status: 401 });
+    }
+    return badRequest('Invalid login challenge.');
+  }
+
+  const credentialId = sanitizeSingleLine(String((body.authentication as { id?: string }).id ?? ''));
+  if (!credentialId) {
+    return badRequest('Credential id is required.');
+  }
+
+  await ensurePasskeyTables(env);
+  const credentialResult = await dbAll<{
+    credential_id: string;
+    user_id: string;
+    public_key: string;
+    algorithm: 'ES256' | 'RS256' | 'EdDSA';
+    transports_json: string;
+    counter: number;
+    avatar_seed: string;
+    email: string | null;
+  }>(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `SELECT
+           p.credential_id,
+           p.user_id,
+           p.public_key,
+           p.algorithm,
+           p.transports_json,
+           p.counter,
+           u.avatar_seed,
+           u.email
+         FROM auth_passkeys p
+         JOIN users u ON u.user_id = p.user_id
+         WHERE p.credential_id = ?1
+         LIMIT 1`
+      ),
+      credentialId
+    )
+  );
+  const credentialRow = credentialResult.results?.[0];
+  if (!credentialRow) {
+    return jsonResponse({ ok: false, message: 'このPasskeyは未登録です。先に新規登録してください。' }, { status: 401 });
+  }
+
+  const transports = (() => {
+    try {
+      const parsed = JSON.parse(credentialRow.transports_json) as string[];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  })();
+
+  let authInfo: Awaited<ReturnType<typeof webauthnServer.verifyAuthentication>>;
+  try {
+    authInfo = await webauthnServer.verifyAuthentication(
+      body.authentication as Parameters<typeof webauthnServer.verifyAuthentication>[0],
+      {
+        id: credentialRow.credential_id,
+        publicKey: credentialRow.public_key,
+        algorithm: credentialRow.algorithm,
+        transports
+      },
+      {
+        challenge: consumed.challenge,
+        origin: getExpectedPasskeyOrigin(request, env),
+        domain: getExpectedPasskeyDomain(request, env),
+        userVerified: true,
+        counter: credentialRow.counter
+      }
+    );
+  } catch (error) {
+    return jsonResponse({ ok: false, message: `Passkey authentication failed: ${(error as Error).message}` }, { status: 401 });
+  }
+
+  const nextCounter = Math.max(
+    Number(credentialRow.counter ?? 0),
+    Number(authInfo.counter ?? 0)
+  );
+  const now = Date.now();
+  await dbRun(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `UPDATE auth_passkeys
+         SET counter = ?1,
+             last_used_at = ?2
+         WHERE credential_id = ?3`
+      ),
+      nextCounter,
+      now,
+      credentialRow.credential_id
+    )
+  );
+  await dbRun(
+    dbBind(
+      dbPrepare(env.DB, 'UPDATE users SET last_login_at = ?1 WHERE user_id = ?2'),
+      now,
+      credentialRow.user_id
+    )
+  );
+
+  const session = await createAuthSession(env, credentialRow.user_id);
+  await maybeCleanupAuthTables(env);
+
+  return jsonResponse({
+    ok: true,
+    userId: credentialRow.user_id,
+    apiKey: session.apiKey,
+    avatarSeed: credentialRow.avatar_seed,
+    email: credentialRow.email,
+    isNewUser: false,
+    mode: 'passkey'
   });
 };
 
@@ -4612,6 +5161,11 @@ export default {
     if (url.pathname === '/api/healthz') {
       return jsonResponse({
         ok: true,
+        auth: {
+          passkey: {
+            enabled: true
+          }
+        },
         mail: {
           provider: 'resend',
           configured: Boolean(env.RESEND_API_KEY?.trim()),
@@ -4624,6 +5178,26 @@ export default {
     if (url.pathname === '/api/v1/bootstrap') {
       if (request.method !== 'POST') return methodNotAllowed();
       return handleBootstrap(env);
+    }
+
+    if (url.pathname === '/api/v1/auth/passkey/register/options') {
+      if (request.method !== 'POST') return methodNotAllowed();
+      return handlePasskeyRegisterOptions(request, env);
+    }
+
+    if (url.pathname === '/api/v1/auth/passkey/register/verify') {
+      if (request.method !== 'POST') return methodNotAllowed();
+      return handlePasskeyRegisterVerify(request, env);
+    }
+
+    if (url.pathname === '/api/v1/auth/passkey/login/options') {
+      if (request.method !== 'POST') return methodNotAllowed();
+      return handlePasskeyLoginOptions(request, env);
+    }
+
+    if (url.pathname === '/api/v1/auth/passkey/login/verify') {
+      if (request.method !== 'POST') return methodNotAllowed();
+      return handlePasskeyLoginVerify(request, env);
     }
 
     if (url.pathname === '/api/v1/auth/request-magic-link') {

@@ -1,79 +1,102 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Link } from '../lib/router';
-import { AuthApiError, getAuth, requestMagicLink } from '../lib/auth';
+import { useMemo, useState, type FormEvent } from 'react';
+import { client as webauthnClient } from '@passwordless-id/webauthn';
+import {
+  AuthApiError,
+  getAuth,
+  requestPasskeyLoginOptions,
+  requestPasskeyRegisterOptions,
+  verifyPasskeyLogin,
+  verifyPasskeyRegister
+} from '../lib/auth';
 
 type AuthPageProps = {
   navigate: (to: string) => void;
 };
 
-const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+type BusyState = 'idle' | 'register' | 'login';
+
+const mapAuthError = (error: unknown) => {
+  const authError = error as AuthApiError;
+  if (authError?.message) return authError.message;
+
+  const domError = error as { name?: string; message?: string };
+  if (domError?.name === 'NotAllowedError') {
+    return '操作がキャンセルされました。もう一度お試しください。';
+  }
+  if (domError?.name === 'NotSupportedError') {
+    return 'この端末/ブラウザはPasskeyに対応していません。';
+  }
+  if (domError?.name === 'InvalidStateError') {
+    return 'このPasskeyは既に登録済みです。ログインをお試しください。';
+  }
+  return domError?.message || '認証に失敗しました。';
+};
 
 export const AuthPage = ({ navigate }: AuthPageProps) => {
   const auth = getAuth();
-
-  const [email, setEmail] = useState(auth?.email ?? '');
-  const [sent, setSent] = useState(false);
-  const [sending, setSending] = useState(false);
+  const [displayName, setDisplayName] = useState('AIYuMe User');
+  const [busy, setBusy] = useState<BusyState>('idle');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const [devLink, setDevLink] = useState('');
-  const [cooldownSec, setCooldownSec] = useState(0);
 
-  const normalizedEmail = email.trim().toLowerCase();
-  const canSubmit = useMemo(
-    () => isValidEmail(normalizedEmail) && !sending && cooldownSec <= 0,
-    [normalizedEmail, sending, cooldownSec]
-  );
-
-  useEffect(() => {
-    if (cooldownSec <= 0) return;
-    const timer = window.setInterval(() => {
-      setCooldownSec((prev) => (prev <= 1 ? 0 : prev - 1));
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [cooldownSec]);
-
-  const submit = async (targetEmail: string) => {
-    if (!isValidEmail(targetEmail)) {
-      setError('メールアドレスの形式が正しくありません。');
-      return;
+  const passkeyAvailable = useMemo(() => {
+    try {
+      return webauthnClient.isAvailable();
+    } catch {
+      return false;
     }
+  }, []);
 
-    setSending(true);
+  const handleRegister = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!passkeyAvailable || busy !== 'idle') return;
+
+    const safeDisplayName = displayName.trim().slice(0, 32) || 'AIYuMe User';
+    setBusy('register');
     setError('');
     setMessage('');
-    setDevLink('');
     try {
-      const result = await requestMagicLink(targetEmail);
-      setSent(true);
-      setMessage(result.message);
-      setDevLink(result.magicLink ?? '');
-      setCooldownSec(45);
-    } catch (err) {
-      const apiError = err as AuthApiError;
-      setError(apiError.message || '通信エラーが発生しました。');
-      if (typeof apiError.retryAfter === 'number' && apiError.retryAfter > 0) {
-        setCooldownSec(apiError.retryAfter);
+      const { challengeId, options } = await requestPasskeyRegisterOptions(safeDisplayName);
+      const registration = await webauthnClient.register(options);
+      const session = await verifyPasskeyRegister({ challengeId, registration });
+      setMessage('Passkey登録が完了しました。');
+      window.setTimeout(() => navigate('/character'), 500);
+      if (!session.userId) {
+        throw new Error('セッション情報が不正です。');
       }
+    } catch (err) {
+      setError(mapAuthError(err));
     } finally {
-      setSending(false);
+      setBusy('idle');
     }
   };
 
-  const handleSubmit = async (event: FormEvent) => {
-    event.preventDefault();
-    await submit(normalizedEmail);
+  const handleLogin = async () => {
+    if (!passkeyAvailable || busy !== 'idle') return;
+    setBusy('login');
+    setError('');
+    setMessage('');
+    try {
+      const { challengeId, options } = await requestPasskeyLoginOptions();
+      const authentication = await webauthnClient.authenticate(options);
+      await verifyPasskeyLogin({ challengeId, authentication });
+      setMessage('ログインしました。');
+      window.setTimeout(() => navigate('/character'), 300);
+    } catch (err) {
+      setError(mapAuthError(err));
+    } finally {
+      setBusy('idle');
+    }
   };
 
-  if (auth?.isEmailVerified) {
+  if (auth?.isEmailVerified || auth?.authMethod === 'passkey') {
     return (
       <section className="section-grid">
         <div className="card auth-card">
           <h2>✅ ログイン済み</h2>
-          <p className="counter">{auth.email}</p>
+          <p className="counter">{auth.email || 'Passkeyアカウント'}</p>
           <div className="scan-inline-actions" style={{ marginTop: 12 }}>
-            <Link to="/settings" className="pill">設定へ戻る</Link>
-            <button type="button" className="secondary" onClick={() => navigate('/review')}>
+            <button type="button" className="pill" onClick={() => navigate('/review')}>
               復習へ進む
             </button>
           </div>
@@ -85,58 +108,45 @@ export const AuthPage = ({ navigate }: AuthPageProps) => {
   return (
     <section className="section-grid">
       <div className="card auth-card">
-        <h2>🔐 ログイン / 新規登録</h2>
+        <h2>🔐 Passkey ログイン</h2>
         <p className="notice">
-          メールに届くリンクでログインします。パスワードは不要です。ログイン後に学習を開始できます。
+          メールなしでログインできます。端末の顔認証・指紋認証・PINを使います。
         </p>
 
-        <form onSubmit={handleSubmit} className="auth-form-grid">
-          <label htmlFor="email-input">メールアドレス</label>
+        {!passkeyAvailable && (
+          <p className="counter">
+            このブラウザはPasskeyに対応していません。別ブラウザ（Safari/Chrome最新版）をお試しください。
+          </p>
+        )}
+
+        <form onSubmit={handleRegister} className="auth-form-grid">
+          <label htmlFor="display-name-input">表示名（任意）</label>
           <input
-            id="email-input"
-            type="email"
-            autoComplete="email"
-            placeholder="example@email.com"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            disabled={sending}
+            id="display-name-input"
+            type="text"
+            value={displayName}
+            maxLength={32}
+            onChange={(event) => setDisplayName(event.target.value)}
+            disabled={busy !== 'idle'}
+            placeholder="AIYuMe User"
           />
-          <button type="submit" disabled={!canSubmit}>
-            {sending ? '送信中…' : 'ログインリンクを送る'}
+          <button type="submit" disabled={!passkeyAvailable || busy !== 'idle'}>
+            {busy === 'register' ? '登録中…' : '🆕 Passkeyで新規登録'}
           </button>
         </form>
 
-        {cooldownSec > 0 && (
-          <p className="counter">再送まで {cooldownSec} 秒</p>
-        )}
-        {error && <p className="counter">{error}</p>}
+        <button
+          type="button"
+          className="secondary"
+          style={{ marginTop: 12 }}
+          onClick={() => void handleLogin()}
+          disabled={!passkeyAvailable || busy !== 'idle'}
+        >
+          {busy === 'login' ? 'ログイン中…' : '🔓 Passkeyでログイン'}
+        </button>
 
-        {sent && (
-          <div className="cut-candidate-box" style={{ marginTop: 12 }}>
-            <p className="counter">{message || 'メールを送信しました。'}</p>
-            <p className="candidate-meta">
-              メールのリンクを開くとログインが完了します。
-            </p>
-            <div className="scan-inline-actions" style={{ marginTop: 8 }}>
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => void submit(normalizedEmail)}
-                disabled={cooldownSec > 0 || sending}
-              >
-                再送する
-              </button>
-              <button type="button" className="secondary" onClick={() => setSent(false)}>
-                入力をやり直す
-              </button>
-            </div>
-            {devLink && (
-              <a href={devLink} className="pill" style={{ marginTop: 8 }}>
-                開発用リンクを開く
-              </a>
-            )}
-          </div>
-        )}
+        {message && <p className="counter">{message}</p>}
+        {error && <p className="counter">{error}</p>}
       </div>
     </section>
   );
