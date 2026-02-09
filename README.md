@@ -106,7 +106,7 @@ Cloud Vision:
 npx wrangler secret put GOOGLE_VISION_API_KEY
 ```
 
-管理者機能（生徒監視・テスト作成）:
+管理者機能（生徒監視・テスト作成・意見確認・全体設定配信）:
 
 ```bash
 npx wrangler secret put ADMIN_TOKEN
@@ -168,9 +168,10 @@ npx wrangler secret put WORKERS_AI_API_TOKEN
 - Core Wordbank:
   - `core_words` / `core_decks` / `core_deck_words` で配信単語帳を管理
   - `/review` では「速習 / 標準」のステップ式カリキュラムを優先表示（`全範囲` は折りたたみ）
-  - 中1〜中3を1ステップに束ねず、`中1 → 中2要点+中3導入 → 中3` の段階で進める
+  - 中1〜中3を1ステップに束ねず、`中1 → 中2 → 中3` の段階で進める
   - 中2語彙が少ない問題に対して、中3導入語を橋渡しとして追加し学習量を平準化
   - 5/10/20語区切りで段階的に取り込み可能（次回開始位置を保持）
+  - ユーザー作成ノート（custom）は `/review` から削除可能
 - Community (Word Repo):
   - Changesetベースの提案→校正→マージ
   - 確定語彙は `ugc_lexeme_canonical`
@@ -304,36 +305,52 @@ npx wrangler secret put WORKERS_AI_API_TOKEN
 
 - 指定生徒の履修語（テスト作成元）を返す
 
-### 13) `POST /api/v1/community/changesets`
+### 13) `GET /api/v1/admin/feedback` (Admin)
+
+- 最新のアプリ意見一覧を返す（screen/device などの短い context を含む）
+
+### 14) `GET /api/v1/admin/settings` (Admin)
+
+- 全ユーザー向けの共通設定を返す
+
+### 15) `POST /api/v1/admin/settings` (Admin)
+
+- 全ユーザー向けの共通設定を更新する
+
+### 16) `GET /api/v1/settings/public`
+
+- ログイン不要。全ユーザー向け共通設定を返す
+
+### 17) `POST /api/v1/community/changesets`
 
 - 提案（changeset）を作成
 
-### 14) `POST /api/v1/community/changesets/:id/items`
+### 18) `POST /api/v1/community/changesets/:id/items`
 
 - 提案に単語差分を追加
 
-### 15) `POST /api/v1/community/changesets/:id/submit`
+### 19) `POST /api/v1/community/changesets/:id/submit`
 
 - `draft -> proposed`
 
-### 16) `POST /api/v1/community/changesets/:id/review`
+### 20) `POST /api/v1/community/changesets/:id/review`
 
 - `approve / request_changes / comment`
 
-### 17) `POST /api/v1/community/changesets/:id/merge`
+### 21) `POST /api/v1/community/changesets/:id/merge`
 
 - editor以上が実行
 - canonical更新 + history追記
 
-### 18) `GET /api/v1/community/tasks`
+### 22) `GET /api/v1/community/tasks`
 
 - 今日の冒険タスクと利用可能トークンを取得
 
-### 19) `POST /api/v1/community/tasks/:taskId/complete`
+### 23) `POST /api/v1/community/tasks/:taskId/complete`
 
 - タスク完了処理。条件達成で報酬デッキ（headword集合）を返却
 
-### 20) `POST /api/v1/usage/report`
+### 24) `POST /api/v1/usage/report`
 
 - 入力: `{ minutesToday }`
 - サーバで `proofread_tokens_today` を再計算
@@ -361,5 +378,7 @@ D1 `usage_daily` で `userId + 日付` ごとにカウントします。
 
 - 生徒向け: `/test/:deckId` で 5/10/20問のオンラインテスト
 - 管理者向け: `/admin` で生徒の履修語からテスト作成
+- 管理者向け: `/admin` で「アプリへの意見」一覧を確認可能
+- 管理者向け: `/admin` で全ユーザー向け共通設定（OCR/AI/前処理既定値）を更新可能
 - 紙配布: 「印刷シート（PDF）」ボタンで印刷画面を開き、ブラウザの「PDFとして保存」で配布可能
 - 生徒データを管理画面で見るには、`/settings` の「☁️ 学習データを同期」を実行してクラウドへ送信

@@ -56,6 +56,7 @@ export type DeckDueSummary = {
   title: string;
   dueCount: number;
   totalCards: number;
+  origin?: Deck['origin'];
 };
 
 export type DeckWord = {
@@ -309,11 +310,36 @@ export const listDeckDueSummaries = async (): Promise<DeckDueSummary[]> => {
         deckId: deck.deckId,
         title: deck.title,
         dueCount,
-        totalCards: deck.headwordNorms.length
+        totalCards: deck.headwordNorms.length,
+        origin: deck.origin
       };
     })
   );
   return summaries.sort((a, b) => b.dueCount - a.dueCount || a.title.localeCompare(b.title));
+};
+
+export const deleteDeck = async (deckId: string) => {
+  const deck = await db.decks.get(deckId);
+  if (!deck) return;
+
+  await db.transaction('rw', db.decks, db.srs, db.lexemeCache, async () => {
+    await db.decks.delete(deckId);
+    await db.srs.where('deckId').equals(deckId).delete();
+
+    // Compact local lexeme cache: remove entries no longer referenced by any deck.
+    const remainingDecks = await db.decks.toArray();
+    const remainingNorms = new Set<string>();
+    for (const item of remainingDecks) {
+      for (const norm of item.headwordNorms) {
+        remainingNorms.add(norm);
+      }
+    }
+    for (const norm of deck.headwordNorms) {
+      if (!remainingNorms.has(norm)) {
+        await db.lexemeCache.delete(norm);
+      }
+    }
+  });
 };
 
 export const getTodayDueTotal = async () => {

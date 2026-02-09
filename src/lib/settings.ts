@@ -11,6 +11,11 @@ export type AppSettings = {
   aiMeaningConsentAccepted: boolean;
 };
 
+export type ManagedAppSettings = Pick<
+  AppSettings,
+  'ocrDebug' | 'defaultPsm' | 'defaultPreprocess' | 'cloudOcrEnabled' | 'aiMeaningAssistEnabled'
+>;
+
 const STORAGE_KEY = 'nanjyo.settings.v1';
 
 export const defaultSettings: AppSettings = {
@@ -118,6 +123,73 @@ export const loadSettings = (): AppSettings => {
 
 export const saveSettings = (settings: AppSettings) => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+};
+
+export const toManagedSettings = (settings: AppSettings): ManagedAppSettings => ({
+  ocrDebug: settings.ocrDebug,
+  defaultPsm: settings.defaultPsm,
+  defaultPreprocess: settings.defaultPreprocess,
+  cloudOcrEnabled: settings.cloudOcrEnabled,
+  aiMeaningAssistEnabled: settings.aiMeaningAssistEnabled
+});
+
+export const applyManagedSettings = (
+  current: AppSettings,
+  managed: Partial<ManagedAppSettings> | null | undefined
+): AppSettings => {
+  if (!managed) return current;
+  const preprocess = managed.defaultPreprocess ?? current.defaultPreprocess;
+  return {
+    ...current,
+    ocrDebug: typeof managed.ocrDebug === 'boolean' ? managed.ocrDebug : current.ocrDebug,
+    defaultPsm: normalizePsm(managed.defaultPsm ?? current.defaultPsm),
+    defaultPreprocess: {
+      grayscale:
+        typeof preprocess.grayscale === 'boolean'
+          ? preprocess.grayscale
+          : current.defaultPreprocess.grayscale,
+      threshold:
+        typeof preprocess.threshold === 'boolean'
+          ? preprocess.threshold
+          : current.defaultPreprocess.threshold,
+      thresholdValue: normalizeNumber(
+        preprocess.thresholdValue,
+        current.defaultPreprocess.thresholdValue,
+        0,
+        255
+      ),
+      invert:
+        typeof preprocess.invert === 'boolean'
+          ? preprocess.invert
+          : current.defaultPreprocess.invert,
+      contrast: normalizeNumber(
+        preprocess.contrast,
+        current.defaultPreprocess.contrast,
+        0.5,
+        2
+      ),
+      brightness: normalizeNumber(
+        preprocess.brightness,
+        current.defaultPreprocess.brightness,
+        -80,
+        80
+      ),
+      maxSide: normalizeNumber(
+        preprocess.maxSide,
+        current.defaultPreprocess.maxSide,
+        1200,
+        2600
+      )
+    },
+    cloudOcrEnabled:
+      typeof managed.cloudOcrEnabled === 'boolean'
+        ? managed.cloudOcrEnabled && current.cloudOcrConsentAccepted
+        : current.cloudOcrEnabled,
+    aiMeaningAssistEnabled:
+      typeof managed.aiMeaningAssistEnabled === 'boolean'
+        ? managed.aiMeaningAssistEnabled && current.aiMeaningConsentAccepted
+        : current.aiMeaningAssistEnabled
+  };
 };
 
 export const summarizeDevice = (userAgent: string) => {

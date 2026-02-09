@@ -194,6 +194,8 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
   const [masteredNormSet, setMasteredNormSet] = useState<Set<string>>(new Set());
 
   const cloudAbortRef = useRef<AbortController | null>(null);
+  const cloudOcrReady = settings.cloudOcrEnabled && settings.cloudOcrConsentAccepted;
+  const aiAssistReady = settings.aiMeaningAssistEnabled && settings.aiMeaningConsentAccepted;
 
   const loadDecks = useCallback(async () => {
     const items = await listDecks();
@@ -208,6 +210,12 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
     setOcrPsm(settings.defaultPsm);
     setPreprocessOptions(settings.defaultPreprocess);
   }, [settings.defaultPsm, settings.defaultPreprocess]);
+
+  useEffect(() => {
+    if (ocrMode === 'cloud' && !cloudOcrReady) {
+      setOcrMode('local');
+    }
+  }, [ocrMode, cloudOcrReady]);
 
   const masteredHiddenCount = useMemo(() => {
     if (showMastered) return 0;
@@ -307,7 +315,7 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
         setCandidates(merged);
         setLookupStatus('done');
 
-        if (settings.aiMeaningAssistEnabled) {
+        if (aiAssistReady) {
           const missingHeadwords = [...new Set(merged.filter((item) => item.source === 'missing').map((item) => item.headwordNorm))];
           if (missingHeadwords.length > 0) {
             const aiResponse = await fetch('/api/v1/ai/meaning-suggest', {
@@ -363,7 +371,7 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
         showToast(message, 'error');
       }
     },
-    [settings.aiMeaningAssistEnabled, showToast]
+    [aiAssistReady, showToast]
   );
 
   const buildCandidatesFromText = useCallback(
@@ -466,8 +474,8 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
   };
 
   const handleRunCloudOcr = async () => {
-    if (!settings.cloudOcrEnabled) {
-      throw new Error('クラウドOCRはSettingsで有効化すると使えます。');
+    if (!cloudOcrReady) {
+      throw new Error('クラウドOCRはSettingsで有効化と同意をすると使えます。');
     }
 
     const prepared = await prepareOcrImage(imageDataUrl, cropRect, preprocessOptions);
@@ -792,21 +800,21 @@ export default function ScanPage({ settings, showToast, navigate }: ScanPageProp
                 <span>📱 端末内で処理（無料）</span>
               </label>
               <label
-                className={`scan-ocr-mode ${ocrMode === 'cloud' ? 'active' : ''} ${!settings.cloudOcrEnabled ? 'disabled' : ''}`}
+                className={`scan-ocr-mode ${ocrMode === 'cloud' ? 'active' : ''} ${!cloudOcrReady ? 'disabled' : ''}`}
               >
                 <input
                   type="radio"
                   name="ocrMode"
                   checked={ocrMode === 'cloud'}
-                  disabled={!settings.cloudOcrEnabled}
+                  disabled={!cloudOcrReady}
                   onChange={() => setOcrMode('cloud')}
                 />
                 <span>☁️ クラウド処理（高精度）</span>
               </label>
             </div>
-            {!settings.cloudOcrEnabled && (
+            {!cloudOcrReady && (
               <p className="counter">
-                クラウド処理は「設定 {'>'} クラウド機能」で有効化できます。
+                クラウド処理は「設定 {'>'} クラウド機能」で有効化と同意をすると使えます。
               </p>
             )}
 

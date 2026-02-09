@@ -14,7 +14,12 @@ import {
   type ABTest,
   type ABTestConfig
 } from '../lib/abtest';
-import type { AppSettings } from '../lib/settings';
+import {
+  applyManagedSettings,
+  toManagedSettings,
+  type AppSettings,
+  type ManagedAppSettings
+} from '../lib/settings';
 
 type AdminPageProps = {
   settings: AppSettings;
@@ -50,6 +55,16 @@ type AnswerState = {
   correct: boolean;
 };
 
+type AdminFeedback = {
+  feedbackId: number;
+  type: 'ocr' | 'ux' | 'bug' | 'feature' | string;
+  message: string;
+  createdAt: number;
+  createdBy: string | null;
+  email: string;
+  context: unknown;
+};
+
 const ADMIN_TOKEN_STORAGE_KEY = 'admin.api.token.v1';
 
 const toDateLabel = (value: number | null) => {
@@ -64,8 +79,7 @@ const modeLabels: Record<TestMode, string> = {
   mixed: 'ミックス'
 };
 
-export default function AdminPage(_props: AdminPageProps) {
-  void _props;
+export default function AdminPage({ settings, onChangeSettings }: AdminPageProps) {
 
   const [tokenInput, setTokenInput] = useState('');
   const [token, setToken] = useState('');
@@ -93,6 +107,18 @@ export default function AdminPage(_props: AdminPageProps) {
   const [newTestDesc, setNewTestDesc] = useState('');
   const [newVariantA, setNewVariantA] = useState('');
   const [newVariantB, setNewVariantB] = useState('');
+
+  const [globalSettings, setGlobalSettings] = useState<ManagedAppSettings>(() =>
+    toManagedSettings(settings)
+  );
+  const [globalSettingsUpdatedAt, setGlobalSettingsUpdatedAt] = useState<number | null>(null);
+  const [globalSettingsLoading, setGlobalSettingsLoading] = useState(false);
+  const [globalSettingsSaving, setGlobalSettingsSaving] = useState(false);
+  const [globalSettingsStatus, setGlobalSettingsStatus] = useState('');
+
+  const [feedbackList, setFeedbackList] = useState<AdminFeedback[]>([]);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [feedbackError, setFeedbackError] = useState('');
 
   const adminFetch = useCallback(async (path: string, init: RequestInit = {}) => {
     if (!token) {
@@ -148,6 +174,53 @@ export default function AdminPage(_props: AdminPageProps) {
     }
   }, [adminFetch]);
 
+  const loadGlobalSettings = useCallback(async () => {
+    setGlobalSettingsLoading(true);
+    setGlobalSettingsStatus('');
+    try {
+      const response = await adminFetch('/api/v1/admin/settings');
+      if (!response.ok) {
+        throw new Error('全体設定の取得に失敗しました。');
+      }
+      const data = (await response.json()) as {
+        ok: boolean;
+        settings?: ManagedAppSettings;
+        updatedAt?: number | null;
+      };
+      if (!data.ok || !data.settings) {
+        throw new Error('全体設定の形式が不正です。');
+      }
+      const merged = applyManagedSettings(settings, data.settings);
+      setGlobalSettings(toManagedSettings(merged));
+      setGlobalSettingsUpdatedAt(data.updatedAt ?? null);
+    } catch (error) {
+      setGlobalSettingsStatus((error as Error).message);
+    } finally {
+      setGlobalSettingsLoading(false);
+    }
+  }, [adminFetch, settings]);
+
+  const loadFeedback = useCallback(async () => {
+    setFeedbackLoading(true);
+    setFeedbackError('');
+    try {
+      const response = await adminFetch('/api/v1/admin/feedback?limit=80');
+      if (!response.ok) {
+        throw new Error('意見一覧の取得に失敗しました。');
+      }
+      const data = (await response.json()) as {
+        ok: boolean;
+        feedback?: AdminFeedback[];
+      };
+      setFeedbackList(data.feedback ?? []);
+    } catch (error) {
+      setFeedbackError((error as Error).message);
+      setFeedbackList([]);
+    } finally {
+      setFeedbackLoading(false);
+    }
+  }, [adminFetch]);
+
   useEffect(() => {
     const saved = localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY) ?? '';
     if (!saved) return;
@@ -162,7 +235,14 @@ export default function AdminPage(_props: AdminPageProps) {
   useEffect(() => {
     if (!token) return;
     void loadStudents();
-  }, [token, loadStudents]);
+    void loadGlobalSettings();
+    void loadFeedback();
+  }, [token, loadStudents, loadGlobalSettings, loadFeedback]);
+
+  useEffect(() => {
+    if (token) return;
+    setGlobalSettings(toManagedSettings(settings));
+  }, [settings, token]);
 
   useEffect(() => {
     if (!token || !selectedUserId) return;
@@ -223,6 +303,11 @@ export default function AdminPage(_props: AdminPageProps) {
     setIndex(0);
     setAnswers([]);
     setTyping('');
+    setGlobalSettings(toManagedSettings(settings));
+    setGlobalSettingsUpdatedAt(null);
+    setGlobalSettingsStatus('');
+    setFeedbackList([]);
+    setFeedbackError('');
   };
 
   const updateAbConfig = (next: ABTestConfig) => {
@@ -281,6 +366,45 @@ export default function AdminPage(_props: AdminPageProps) {
     setNewTestDesc('');
     setNewVariantA('');
     setNewVariantB('');
+  };
+
+  const handleSaveGlobalSettings = async () => {
+    setGlobalSettingsSaving(true);
+    setGlobalSettingsStatus('');
+    try {
+      const response = await adminFetch('/api/v1/admin/settings', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ settings: globalSettings })
+      });
+      if (!response.ok) {
+        throw new Error('全体設定の保存に失敗しました。');
+      }
+      const data = (await response.json()) as {
+        ok: boolean;
+        settings?: ManagedAppSettings;
+        updatedAt?: number;
+      };
+      if (!data.ok || !data.settings) {
+        throw new Error('全体設定の保存レスポンスが不正です。');
+      }
+      const merged = applyManagedSettings(settings, data.settings);
+      onChangeSettings(merged);
+      setGlobalSettings(toManagedSettings(merged));
+      setGlobalSettingsUpdatedAt(data.updatedAt ?? Date.now());
+      setGlobalSettingsStatus('全ユーザー向け設定を保存しました。再読み込み時に反映されます。');
+    } catch (error) {
+      setGlobalSettingsStatus((error as Error).message);
+    } finally {
+      setGlobalSettingsSaving(false);
+    }
+  };
+
+  const contextValue = (context: unknown, key: string) => {
+    if (!context || typeof context !== 'object' || Array.isArray(context)) return '';
+    const value = (context as Record<string, unknown>)[key];
+    if (typeof value === 'string') return value;
+    return '';
   };
 
   const handleGenerateTest = () => {
@@ -386,6 +510,242 @@ export default function AdminPage(_props: AdminPageProps) {
                   >
                     選択
                   </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {token && (
+        <div className="card">
+          <h2>🌐 全体設定（全ユーザー）</h2>
+          <p className="counter">
+            クラウド上の共通設定です。各ユーザーは次回読み込み時に反映されます。
+          </p>
+          <p className="counter">
+            更新: {toDateLabel(globalSettingsUpdatedAt)}
+          </p>
+
+          <label className="candidate-toggle">
+            <input
+              type="checkbox"
+              checked={globalSettings.cloudOcrEnabled}
+              onChange={(event) =>
+                setGlobalSettings((prev) => ({ ...prev, cloudOcrEnabled: event.target.checked }))
+              }
+            />
+            <span>クラウドOCRを既定で有効</span>
+          </label>
+          <label className="candidate-toggle">
+            <input
+              type="checkbox"
+              checked={globalSettings.aiMeaningAssistEnabled}
+              onChange={(event) =>
+                setGlobalSettings((prev) => ({ ...prev, aiMeaningAssistEnabled: event.target.checked }))
+              }
+            />
+            <span>AI意味提案を既定で有効</span>
+          </label>
+          <label className="candidate-toggle">
+            <input
+              type="checkbox"
+              checked={globalSettings.ocrDebug}
+              onChange={(event) =>
+                setGlobalSettings((prev) => ({ ...prev, ocrDebug: event.target.checked }))
+              }
+            />
+            <span>OCRデバッグ表示を既定で有効</span>
+          </label>
+
+          <label style={{ marginTop: 8 }}>既定PSM</label>
+          <select
+            value={globalSettings.defaultPsm}
+            onChange={(event) =>
+              setGlobalSettings((prev) => ({
+                ...prev,
+                defaultPsm: event.target.value as ManagedAppSettings['defaultPsm']
+              }))
+            }
+          >
+            <option value="6">6（文章ブロック）</option>
+            <option value="11">11（バラバラ文字）</option>
+            <option value="7">7（1行）</option>
+          </select>
+
+          <div className="scan-inline-actions" style={{ marginTop: 12 }}>
+            <label style={{ flex: 1 }}>
+              threshold
+              <input
+                type="number"
+                min={0}
+                max={255}
+                value={globalSettings.defaultPreprocess.thresholdValue}
+                onChange={(event) =>
+                  setGlobalSettings((prev) => ({
+                    ...prev,
+                    defaultPreprocess: {
+                      ...prev.defaultPreprocess,
+                      thresholdValue: Math.max(0, Math.min(255, Number(event.target.value) || 0))
+                    }
+                  }))
+                }
+              />
+            </label>
+            <label style={{ flex: 1 }}>
+              contrast
+              <input
+                type="number"
+                step={0.01}
+                min={0.5}
+                max={2}
+                value={globalSettings.defaultPreprocess.contrast}
+                onChange={(event) =>
+                  setGlobalSettings((prev) => ({
+                    ...prev,
+                    defaultPreprocess: {
+                      ...prev.defaultPreprocess,
+                      contrast: Math.max(0.5, Math.min(2, Number(event.target.value) || 0.5))
+                    }
+                  }))
+                }
+              />
+            </label>
+          </div>
+          <div className="scan-inline-actions">
+            <label style={{ flex: 1 }}>
+              brightness
+              <input
+                type="number"
+                min={-80}
+                max={80}
+                value={globalSettings.defaultPreprocess.brightness}
+                onChange={(event) =>
+                  setGlobalSettings((prev) => ({
+                    ...prev,
+                    defaultPreprocess: {
+                      ...prev.defaultPreprocess,
+                      brightness: Math.max(-80, Math.min(80, Number(event.target.value) || 0))
+                    }
+                  }))
+                }
+              />
+            </label>
+            <label style={{ flex: 1 }}>
+              maxSide
+              <input
+                type="number"
+                min={1200}
+                max={2600}
+                value={globalSettings.defaultPreprocess.maxSide}
+                onChange={(event) =>
+                  setGlobalSettings((prev) => ({
+                    ...prev,
+                    defaultPreprocess: {
+                      ...prev.defaultPreprocess,
+                      maxSide: Math.max(1200, Math.min(2600, Number(event.target.value) || 1200))
+                    }
+                  }))
+                }
+              />
+            </label>
+          </div>
+          <div className="scan-inline-actions">
+            <label className="candidate-toggle" style={{ flex: 1 }}>
+              <input
+                type="checkbox"
+                checked={globalSettings.defaultPreprocess.grayscale}
+                onChange={(event) =>
+                  setGlobalSettings((prev) => ({
+                    ...prev,
+                    defaultPreprocess: {
+                      ...prev.defaultPreprocess,
+                      grayscale: event.target.checked
+                    }
+                  }))
+                }
+              />
+              <span>grayscale</span>
+            </label>
+            <label className="candidate-toggle" style={{ flex: 1 }}>
+              <input
+                type="checkbox"
+                checked={globalSettings.defaultPreprocess.threshold}
+                onChange={(event) =>
+                  setGlobalSettings((prev) => ({
+                    ...prev,
+                    defaultPreprocess: {
+                      ...prev.defaultPreprocess,
+                      threshold: event.target.checked
+                    }
+                  }))
+                }
+              />
+              <span>threshold</span>
+            </label>
+            <label className="candidate-toggle" style={{ flex: 1 }}>
+              <input
+                type="checkbox"
+                checked={globalSettings.defaultPreprocess.invert}
+                onChange={(event) =>
+                  setGlobalSettings((prev) => ({
+                    ...prev,
+                    defaultPreprocess: {
+                      ...prev.defaultPreprocess,
+                      invert: event.target.checked
+                    }
+                  }))
+                }
+              />
+              <span>invert</span>
+            </label>
+          </div>
+
+          <div className="scan-inline-actions" style={{ marginTop: 12 }}>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => void loadGlobalSettings()}
+              disabled={globalSettingsLoading}
+            >
+              {globalSettingsLoading ? '読込中…' : '再読込'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleSaveGlobalSettings()}
+              disabled={globalSettingsSaving}
+            >
+              {globalSettingsSaving ? '保存中…' : '全ユーザーに保存'}
+            </button>
+          </div>
+          {globalSettingsStatus && <p className="counter">{globalSettingsStatus}</p>}
+        </div>
+      )}
+
+      {token && (
+        <div className="card">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h2>💬 アプリへの意見</h2>
+            <button type="button" className="secondary" onClick={() => void loadFeedback()} disabled={feedbackLoading}>
+              更新
+            </button>
+          </div>
+          {feedbackLoading && <p className="counter">読み込み中…</p>}
+          {feedbackError && <p className="counter">{feedbackError}</p>}
+          {!feedbackLoading && feedbackList.length === 0 && <p>意見はまだありません。</p>}
+          {feedbackList.length > 0 && (
+            <div className="word-grid">
+              {feedbackList.map((item) => (
+                <div key={item.feedbackId} className="word-item" style={{ alignItems: 'flex-start' }}>
+                  <div>
+                    <strong>[{item.type}] {item.message}</strong>
+                    <small className="candidate-meta">
+                      {toDateLabel(item.createdAt)} / {item.email || item.createdBy || '匿名'}
+                    </small>
+                    <small className="candidate-meta">
+                      画面: {contextValue(item.context, 'screen') || '-'} / 端末: {contextValue(item.context, 'device') || '-'}
+                    </small>
+                  </div>
                 </div>
               ))}
             </div>

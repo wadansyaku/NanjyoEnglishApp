@@ -140,6 +140,26 @@ type UsageReportRequest = {
   minutesToday: number;
 };
 
+type GlobalAppSettings = {
+  ocrDebug: boolean;
+  defaultPsm: '6' | '7' | '11';
+  defaultPreprocess: {
+    grayscale: boolean;
+    threshold: boolean;
+    thresholdValue: number;
+    invert: boolean;
+    contrast: number;
+    brightness: number;
+    maxSide: number;
+  };
+  cloudOcrEnabled: boolean;
+  aiMeaningAssistEnabled: boolean;
+};
+
+type AdminGlobalSettingsRequest = {
+  settings: unknown;
+};
+
 class HttpError extends Error {
   status: number;
 
@@ -236,6 +256,98 @@ const parsePositiveInt = (raw: string | undefined, fallback: number) => {
 const parseBoolean = (raw: string | undefined, fallback = false) => {
   if (!raw) return fallback;
   return raw === '1' || raw.toLowerCase() === 'true';
+};
+
+const GLOBAL_SETTINGS_KEY = 'app_settings_default_v1';
+
+const DEFAULT_GLOBAL_SETTINGS: GlobalAppSettings = {
+  ocrDebug: false,
+  defaultPsm: '6',
+  defaultPreprocess: {
+    grayscale: true,
+    threshold: false,
+    thresholdValue: 160,
+    invert: false,
+    contrast: 1.12,
+    brightness: 2,
+    maxSide: 1900
+  },
+  cloudOcrEnabled: false,
+  aiMeaningAssistEnabled: false
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const clampNumber = (value: unknown, fallback: number, min: number, max: number) => {
+  if (typeof value !== 'number' || Number.isNaN(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
+};
+
+const normalizePsmValue = (value: unknown, fallback: GlobalAppSettings['defaultPsm']) => {
+  if (value === '6' || value === '7' || value === '11') return value;
+  return fallback;
+};
+
+const normalizeGlobalSettings = (input: unknown): GlobalAppSettings => {
+  const root = isRecord(input) ? input : {};
+  const preprocessRaw = isRecord(root.defaultPreprocess) ? root.defaultPreprocess : {};
+  return {
+    ocrDebug: typeof root.ocrDebug === 'boolean' ? root.ocrDebug : DEFAULT_GLOBAL_SETTINGS.ocrDebug,
+    defaultPsm: normalizePsmValue(root.defaultPsm, DEFAULT_GLOBAL_SETTINGS.defaultPsm),
+    defaultPreprocess: {
+      grayscale:
+        typeof preprocessRaw.grayscale === 'boolean'
+          ? preprocessRaw.grayscale
+          : DEFAULT_GLOBAL_SETTINGS.defaultPreprocess.grayscale,
+      threshold:
+        typeof preprocessRaw.threshold === 'boolean'
+          ? preprocessRaw.threshold
+          : DEFAULT_GLOBAL_SETTINGS.defaultPreprocess.threshold,
+      thresholdValue: Math.round(
+        clampNumber(
+          preprocessRaw.thresholdValue,
+          DEFAULT_GLOBAL_SETTINGS.defaultPreprocess.thresholdValue,
+          0,
+          255
+        )
+      ),
+      invert:
+        typeof preprocessRaw.invert === 'boolean'
+          ? preprocessRaw.invert
+          : DEFAULT_GLOBAL_SETTINGS.defaultPreprocess.invert,
+      contrast: clampNumber(
+        preprocessRaw.contrast,
+        DEFAULT_GLOBAL_SETTINGS.defaultPreprocess.contrast,
+        0.5,
+        2
+      ),
+      brightness: Math.round(
+        clampNumber(
+          preprocessRaw.brightness,
+          DEFAULT_GLOBAL_SETTINGS.defaultPreprocess.brightness,
+          -80,
+          80
+        )
+      ),
+      maxSide: Math.round(
+        clampNumber(
+          preprocessRaw.maxSide,
+          DEFAULT_GLOBAL_SETTINGS.defaultPreprocess.maxSide,
+          1200,
+          2600
+        )
+      )
+    },
+    cloudOcrEnabled:
+      typeof root.cloudOcrEnabled === 'boolean'
+        ? root.cloudOcrEnabled
+        : DEFAULT_GLOBAL_SETTINGS.cloudOcrEnabled,
+    aiMeaningAssistEnabled:
+      typeof root.aiMeaningAssistEnabled === 'boolean'
+        ? root.aiMeaningAssistEnabled
+        : DEFAULT_GLOBAL_SETTINGS.aiMeaningAssistEnabled
+  };
 };
 
 const validateContextJson = (value: unknown) => {
@@ -2164,6 +2276,186 @@ const handleFeedback = async (request: Request, env: Env, auth: AuthContext) => 
   return jsonResponse({ ok: true });
 };
 
+const ensureAdminGlobalSettingsTable = async (env: Env) => {
+  await dbRun(
+    dbPrepare(
+      env.DB,
+      `CREATE TABLE IF NOT EXISTS admin_global_settings (
+         setting_key TEXT PRIMARY KEY,
+         settings_json TEXT NOT NULL,
+         updated_at INTEGER NOT NULL,
+         updated_by TEXT
+       )`
+    )
+  );
+};
+
+const readGlobalSettingsSnapshot = async (env: Env) => {
+  await ensureAdminGlobalSettingsTable(env);
+  const result = await dbAll<{
+    settings_json: string;
+    updated_at: number;
+  }>(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `SELECT settings_json, updated_at
+         FROM admin_global_settings
+         WHERE setting_key = ?1
+         LIMIT 1`
+      ),
+      GLOBAL_SETTINGS_KEY
+    )
+  );
+  const row = result.results?.[0];
+  if (!row?.settings_json) {
+    return {
+      settings: null as GlobalAppSettings | null,
+      updatedAt: null as number | null
+    };
+  }
+  try {
+    const parsed = JSON.parse(row.settings_json) as unknown;
+    return {
+      settings: normalizeGlobalSettings(parsed),
+      updatedAt: row.updated_at
+    };
+  } catch {
+    return {
+      settings: null as GlobalAppSettings | null,
+      updatedAt: row.updated_at
+    };
+  }
+};
+
+const handlePublicSettings = async (env: Env) => {
+  const snapshot = await readGlobalSettingsSnapshot(env);
+  return jsonResponse({
+    ok: true,
+    settings: snapshot.settings,
+    updatedAt: snapshot.updatedAt
+  });
+};
+
+const handleAdminGlobalSettingsGet = async (request: Request, env: Env) => {
+  if (!requireAdmin(request, env)) {
+    return forbidden('Admin token is required.');
+  }
+  const snapshot = await readGlobalSettingsSnapshot(env);
+  return jsonResponse({
+    ok: true,
+    settings: snapshot.settings ?? DEFAULT_GLOBAL_SETTINGS,
+    updatedAt: snapshot.updatedAt
+  });
+};
+
+const handleAdminGlobalSettingsUpdate = async (request: Request, env: Env) => {
+  if (!requireAdmin(request, env)) {
+    return forbidden('Admin token is required.');
+  }
+
+  let body: AdminGlobalSettingsRequest;
+  try {
+    body = await request.json();
+  } catch {
+    return badRequest('Invalid JSON.');
+  }
+  if (!body || body.settings == null) {
+    return badRequest('settings is required.');
+  }
+
+  const settings = normalizeGlobalSettings(body.settings);
+  const now = Date.now();
+  await ensureAdminGlobalSettingsTable(env);
+  await dbRun(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `INSERT INTO admin_global_settings (setting_key, settings_json, updated_at, updated_by)
+         VALUES (?1, ?2, ?3, 'admin')
+         ON CONFLICT(setting_key) DO UPDATE SET
+           settings_json = excluded.settings_json,
+           updated_at = excluded.updated_at,
+           updated_by = excluded.updated_by`
+      ),
+      GLOBAL_SETTINGS_KEY,
+      JSON.stringify(settings),
+      now
+    )
+  );
+
+  return jsonResponse({
+    ok: true,
+    settings,
+    updatedAt: now
+  });
+};
+
+const handleAdminFeedback = async (request: Request, env: Env) => {
+  if (!requireAdmin(request, env)) {
+    return forbidden('Admin token is required.');
+  }
+
+  const url = new URL(request.url);
+  const limitParam = Number(url.searchParams.get('limit') ?? 50);
+  const offsetParam = Number(url.searchParams.get('offset') ?? 0);
+  const limit = Math.max(10, Math.min(200, Number.isFinite(limitParam) ? Math.floor(limitParam) : 50));
+  const offset = Math.max(0, Number.isFinite(offsetParam) ? Math.floor(offsetParam) : 0);
+
+  const rows = await dbAll<{
+    feedback_id: number;
+    type: string;
+    message: string;
+    context_json: string | null;
+    created_at: number;
+    created_by: string | null;
+    email: string | null;
+  }>(
+    dbBind(
+      dbPrepare(
+        env.DB,
+        `SELECT
+           f.feedback_id,
+           f.type,
+           f.message,
+           f.context_json,
+           f.created_at,
+           f.created_by,
+           u.email
+         FROM feedback f
+         LEFT JOIN users u ON u.user_id = f.created_by
+         ORDER BY f.created_at DESC
+         LIMIT ?1 OFFSET ?2`
+      ),
+      limit,
+      offset
+    )
+  );
+
+  return jsonResponse({
+    ok: true,
+    feedback: (rows.results ?? []).map((row) => {
+      let context: unknown = null;
+      if (row.context_json) {
+        try {
+          context = JSON.parse(row.context_json);
+        } catch {
+          context = null;
+        }
+      }
+      return {
+        feedbackId: row.feedback_id,
+        type: row.type,
+        message: row.message,
+        createdAt: row.created_at,
+        createdBy: row.created_by ?? null,
+        email: row.email ?? '',
+        context
+      };
+    })
+  });
+};
+
 const handleCloudOcr = async (request: Request, env: Env, auth: AuthContext) => {
   let body: CloudOcrRequest;
   try {
@@ -2466,7 +2758,7 @@ const handleWordbankCurriculum = async (env: Env) => {
     }),
     buildStep({
       stepId: 'accelerated_jhs2_bridge',
-      title: '中2要点＋中3導入（速習）',
+      title: '中2（速習）',
       description: '中2が短い分を中3前半で補い、学習量を平準化します。',
       deckIds: ['default_g8_jhs2', sliceUntil('default_g9_jhs3', defaultG9SplitA)],
       note: '中2単独の語数が少ないため、中3導入を同時に進めます。',
@@ -2527,7 +2819,7 @@ const handleWordbankCurriculum = async (env: Env) => {
     }),
     buildStep({
       stepId: 'standard_jhs2_bridge',
-      title: '中2要点＋中3導入（標準）',
+      title: '中2（標準）',
       description: '中2の短い範囲を中3導入と一体で進めます。',
       deckIds: ['standard_g8_jhs2', sliceUntil('standard_g9_jhs3', standardG9Split)],
       note: '中2単独の語数差を吸収するための橋渡しステップです。',
@@ -3873,6 +4165,11 @@ export default {
       return handleUsageReport(request, env, auth);
     }
 
+    if (url.pathname === '/api/v1/settings/public') {
+      if (request.method !== 'GET') return methodNotAllowed();
+      return handlePublicSettings(env);
+    }
+
     if (url.pathname === '/api/v1/wordbank/decks') {
       if (request.method !== 'GET') return methodNotAllowed();
       return handleWordbankDecks(env);
@@ -3905,6 +4202,21 @@ export default {
     if (url.pathname === '/api/v1/admin/students') {
       if (request.method !== 'GET') return methodNotAllowed();
       return handleAdminStudents(request, env);
+    }
+
+    if (url.pathname === '/api/v1/admin/feedback') {
+      if (request.method !== 'GET') return methodNotAllowed();
+      return handleAdminFeedback(request, env);
+    }
+
+    if (url.pathname === '/api/v1/admin/settings') {
+      if (request.method === 'GET') {
+        return handleAdminGlobalSettingsGet(request, env);
+      }
+      if (request.method === 'POST') {
+        return handleAdminGlobalSettingsUpdate(request, env);
+      }
+      return methodNotAllowed();
     }
 
     if (url.pathname.startsWith('/api/v1/admin/students/')) {

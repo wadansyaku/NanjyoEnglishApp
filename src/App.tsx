@@ -12,7 +12,14 @@ import { Link, usePath } from './lib/router';
 import { ensureAuth } from './lib/auth';
 import { loadLastOcrMetrics } from './lib/feedbackMeta';
 import { getXpSummary } from './db';
-import { loadSettings, saveSettings, summarizeDevice, type AppSettings } from './lib/settings';
+import {
+  applyManagedSettings,
+  loadSettings,
+  saveSettings,
+  summarizeDevice,
+  type AppSettings,
+  type ManagedAppSettings
+} from './lib/settings';
 import { bumpUsageMinute } from './lib/usage';
 import { Modal, ToastHost, type ToastItem } from './components/ui';
 
@@ -38,6 +45,27 @@ export default function App() {
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch('/api/v1/settings/public');
+        if (!response.ok) return;
+        const data = (await response.json()) as {
+          ok: boolean;
+          settings?: ManagedAppSettings | null;
+        };
+        if (!data.ok || !data.settings || cancelled) return;
+        setSettings((prev) => applyManagedSettings(prev, data.settings));
+      } catch {
+        // ignore public settings fetch errors
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (path === '/') {

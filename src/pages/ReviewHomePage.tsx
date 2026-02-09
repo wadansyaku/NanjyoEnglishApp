@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, usePath } from '../lib/router';
 import {
   createOrUpdateSystemDeck,
+  deleteDeck,
   getQuickReviewCards,
   getQuickReviewCount,
   listDeckDueSummaries,
@@ -47,6 +48,7 @@ export default function ReviewHomePage() {
   const [wordbankImportingId, setWordbankImportingId] = useState('');
   const [wordbankStatus, setWordbankStatus] = useState('');
   const [showRawDecks, setShowRawDecks] = useState(false);
+  const [deletingDeckId, setDeletingDeckId] = useState('');
 
   const [tracks, setTracks] = useState<WordbankCurriculumTrack[]>([]);
   const [allRange, setAllRange] = useState<WordbankCurriculumResponse['allRange']>(null);
@@ -226,6 +228,21 @@ export default function ReviewHomePage() {
     setQuickState('reviewing');
   };
 
+  const handleDeleteCustomDeck = async (deckId: string, title: string) => {
+    if (!deckId) return;
+    if (!confirm(`「${title}」を削除しますか？この操作は取り消せません。`)) return;
+    setDeletingDeckId(deckId);
+    try {
+      await deleteDeck(deckId);
+      setWordbankStatus(`「${title}」を削除しました。`);
+      await loadData();
+    } catch (error) {
+      setWordbankStatus((error as Error).message || '単語ノートの削除に失敗しました。');
+    } finally {
+      setDeletingDeckId('');
+    }
+  };
+
   const handleGrade = async (grade: 'again' | 'hard' | 'good' | 'easy') => {
     const card = quickCards[currentIndex];
     await reviewCard(card.srs.deckId, card.srs.cardId, grade);
@@ -356,6 +373,16 @@ export default function ReviewHomePage() {
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <Link className="pill" to={`/review/${item.deckId}`}>開く</Link>
                 <Link className="pill" to={`/test/${item.deckId}`}>テスト</Link>
+                {(item.origin !== 'core' && item.origin !== 'dungeon') && (
+                  <button
+                    type="button"
+                    className="pill secondary"
+                    onClick={() => void handleDeleteCustomDeck(item.deckId, item.title)}
+                    disabled={deletingDeckId === item.deckId}
+                  >
+                    {deletingDeckId === item.deckId ? '削除中…' : '削除'}
+                  </button>
+                )}
               </div>
             </div>
           ))}
