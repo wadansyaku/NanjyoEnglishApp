@@ -265,12 +265,10 @@ export default function ReviewPage({ deckId, settings, showToast }: ReviewPagePr
               aria-label={showAnswer ? '英単語面に戻す' : '意味面へめくる'}
             >
               <span className="review-flip-face review-flip-front">
-                <small className="review-flip-hint">ENGLISH</small>
                 <strong>{dueCard.lexeme.headword}</strong>
                 <small>タップで意味へ</small>
               </span>
               <span className="review-flip-face review-flip-back">
-                <small className="review-flip-hint">にほんご</small>
                 <strong>{dueCard.lexeme.meaningJa}</strong>
                 <small>タップで英語へ</small>
               </span>

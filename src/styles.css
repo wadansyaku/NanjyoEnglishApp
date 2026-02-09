@@ -1276,6 +1276,22 @@ hr {
   .card {
     padding: 24px;
   }
+
+  .review-grade-dock {
+    position: static;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    padding: 0;
+    margin-top: 12px;
+    border-top: none;
+    background: transparent;
+    backdrop-filter: none;
+  }
+
+  .review-page-spacer {
+    display: none;
+  }
 }
 
 @media (max-width: 767px) {

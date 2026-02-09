@@ -301,12 +301,10 @@ export default function ReviewHomePage({ settings }: ReviewHomePageProps) {
               aria-label={showAnswer ? '英単語面に戻す' : '意味面へめくる'}
             >
               <span className="review-flip-face review-flip-front">
-                <small className="review-flip-hint">ENGLISH</small>
                 <strong>{card.lexeme.headword}</strong>
                 <small>タップで意味へ</small>
               </span>
               <span className="review-flip-face review-flip-back">
-                <small className="review-flip-hint">にほんご</small>
                 <strong>{card.lexeme.meaningJa}</strong>
                 <small>タップで英語へ</small>
               </span>
@@ -417,9 +415,6 @@ export default function ReviewHomePage({ settings }: ReviewHomePageProps) {
 
       <div className="card">
         <h2>学校単語帳</h2>
-        <p className="notice">
-          ここではステップだけ選びます。5/10/20語の区切り追加は、学習開始後の復習画面で行います。
-        </p>
 
         {tracks.length > 0 && (
           <>
