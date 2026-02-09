@@ -54,6 +54,7 @@ export default function ReviewHomePage({ settings }: ReviewHomePageProps) {
   const [wordbankImportingId, setWordbankImportingId] = useState('');
   const [wordbankStatus, setWordbankStatus] = useState('');
   const [showRawDecks, setShowRawDecks] = useState(false);
+  const [showSchoolWordbank, setShowSchoolWordbank] = useState(false);
   const [deletingDeckId, setDeletingDeckId] = useState('');
 
   const [tracks, setTracks] = useState<WordbankCurriculumTrack[]>([]);
@@ -417,111 +418,128 @@ export default function ReviewHomePage({ settings }: ReviewHomePageProps) {
       </div>
 
       <div className="card">
-        <h2>学校単語帳</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+          <h2 style={{ margin: 0 }}>学校単語帳</h2>
+          <button
+            type="button"
+            className="secondary candidate-cut-button"
+            onClick={() => setShowSchoolWordbank((prev) => !prev)}
+          >
+            {showSchoolWordbank ? '閉じる' : '開く'}
+          </button>
+        </div>
 
-        {tracks.length > 0 && (
+        {!showSchoolWordbank && (
+          <p className="counter">タップして学校単語帳を表示</p>
+        )}
+
+        {showSchoolWordbank && (
           <>
-            <div className="pill-group">
-              {tracks.map((track) => (
-                <button
-                  type="button"
-                  key={track.trackId}
-                  className={track.trackId === (selectedTrack?.trackId ?? '') ? '' : 'secondary'}
-                  onClick={() => setSelectedTrackId(track.trackId)}
-                >
-                  {track.title}
-                </button>
-              ))}
-            </div>
+            {tracks.length > 0 && (
+              <>
+                <div className="pill-group" style={{ marginTop: 12 }}>
+                  {tracks.map((track) => (
+                    <button
+                      type="button"
+                      key={track.trackId}
+                      className={track.trackId === (selectedTrack?.trackId ?? '') ? '' : 'secondary'}
+                      onClick={() => setSelectedTrackId(track.trackId)}
+                    >
+                      {track.title}
+                    </button>
+                  ))}
+                </div>
 
-            {selectedTrack && (
+                {selectedTrack && (
+                  <div className="word-grid" style={{ marginTop: 12 }}>
+                    <p className="counter">{selectedTrack.description}</p>
+                    {selectedTrack.steps.map((step) => {
+                      const progress = stepProgress[step.stepId];
+                      const learned = progress?.offset ?? 0;
+                      const importing = wordbankImportingId === step.stepId;
+                      return (
+                        <div key={step.stepId} className="word-item" style={{ alignItems: 'flex-start' }}>
+                          <div>
+                            <strong>{step.title}</strong>
+                            <small className="candidate-meta">{step.wordCount}語 ・ 取り込み済み {Math.min(learned, step.wordCount)}語</small>
+                            <small className="candidate-meta">{step.description}</small>
+                            {step.note && <small className="candidate-meta">{step.note}</small>}
+                          </div>
+                          <button
+                            type="button"
+                            className="pill"
+                            onClick={() => handleStartCurriculumStep(step)}
+                            disabled={importing}
+                          >
+                            {importing ? '準備中…' : learned > 0 ? 'つづきを開く' : '学習を始める'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+
+            {allRange && (
+              <details style={{ marginTop: 12 }}>
+                <summary>全範囲（上級者向け）</summary>
+                <div className="word-item" style={{ marginTop: 10 }}>
+                  <div>
+                    <strong>{allRange.title}</strong>
+                    <small className="candidate-meta">{allRange.wordCount}語 ・ {allRange.description}</small>
+                  </div>
+                  <button
+                    type="button"
+                    className="pill"
+                    onClick={() => handleStartWordbankDeck(allRange.deckId)}
+                    disabled={wordbankImportingId === allRange.deckId}
+                  >
+                    {wordbankImportingId === allRange.deckId ? '追加中…' : '学習を始める'}
+                  </button>
+                </div>
+              </details>
+            )}
+
+            <button
+              type="button"
+              className="secondary"
+              style={{ marginTop: 12 }}
+              onClick={() => setShowRawDecks((prev) => !prev)}
+            >
+              {showRawDecks ? '詳細デッキを閉じる' : '詳細デッキを表示'}
+            </button>
+
+            {showRawDecks && (
               <div className="word-grid" style={{ marginTop: 12 }}>
-                <p className="counter">{selectedTrack.description}</p>
-                {selectedTrack.steps.map((step) => {
-                  const progress = stepProgress[step.stepId];
-                  const learned = progress?.offset ?? 0;
-                  const importing = wordbankImportingId === step.stepId;
-                  return (
-                    <div key={step.stepId} className="word-item" style={{ alignItems: 'flex-start' }}>
-                      <div>
-                        <strong>{step.title}</strong>
-                        <small className="candidate-meta">{step.wordCount}語 ・ 取り込み済み {Math.min(learned, step.wordCount)}語</small>
-                        <small className="candidate-meta">{step.description}</small>
-                        {step.note && <small className="candidate-meta">{step.note}</small>}
-                      </div>
-                      <button
-                        type="button"
-                        className="pill"
-                        onClick={() => handleStartCurriculumStep(step)}
-                        disabled={importing}
-                      >
-                        {importing ? '準備中…' : learned > 0 ? 'つづきを開く' : '学習を始める'}
-                      </button>
+                {wordbankLoading && <p className="counter">読み込み中…</p>}
+                {!wordbankLoading && wordbankDecks.length === 0 && (
+                  <p className="counter">公開されている単語帳はまだありません。</p>
+                )}
+                {wordbankDecks.map((deck) => (
+                  <div key={deck.deckId} className="word-item">
+                    <div>
+                      <strong>{deck.title}</strong>
+                      <small className="candidate-meta">
+                        {deck.wordCount}語 {deck.description ? `・${deck.description}` : ''}
+                      </small>
                     </div>
-                  );
-                })}
+                    <button
+                      className="pill"
+                      type="button"
+                      onClick={() => handleStartWordbankDeck(deck.deckId)}
+                      disabled={wordbankImportingId === deck.deckId}
+                    >
+                      {wordbankImportingId === deck.deckId ? '追加中…' : '学習を始める'}
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
+
+            {wordbankStatus && <p className="counter">{wordbankStatus}</p>}
           </>
         )}
-
-        {allRange && (
-          <details style={{ marginTop: 12 }}>
-            <summary>全範囲（上級者向け）</summary>
-            <div className="word-item" style={{ marginTop: 10 }}>
-              <div>
-                <strong>{allRange.title}</strong>
-                <small className="candidate-meta">{allRange.wordCount}語 ・ {allRange.description}</small>
-              </div>
-              <button
-                type="button"
-                className="pill"
-                onClick={() => handleStartWordbankDeck(allRange.deckId)}
-                disabled={wordbankImportingId === allRange.deckId}
-              >
-                {wordbankImportingId === allRange.deckId ? '追加中…' : '学習を始める'}
-              </button>
-            </div>
-          </details>
-        )}
-
-        <button
-          type="button"
-          className="secondary"
-          style={{ marginTop: 12 }}
-          onClick={() => setShowRawDecks((prev) => !prev)}
-        >
-          {showRawDecks ? '詳細デッキを閉じる' : '詳細デッキを表示'}
-        </button>
-
-        {showRawDecks && (
-          <div className="word-grid" style={{ marginTop: 12 }}>
-            {wordbankLoading && <p className="counter">読み込み中…</p>}
-            {!wordbankLoading && wordbankDecks.length === 0 && (
-              <p className="counter">公開されている単語帳はまだありません。</p>
-            )}
-            {wordbankDecks.map((deck) => (
-              <div key={deck.deckId} className="word-item">
-                <div>
-                  <strong>{deck.title}</strong>
-                  <small className="candidate-meta">
-                    {deck.wordCount}語 {deck.description ? `・${deck.description}` : ''}
-                  </small>
-                </div>
-                <button
-                  className="pill"
-                  type="button"
-                  onClick={() => handleStartWordbankDeck(deck.deckId)}
-                  disabled={wordbankImportingId === deck.deckId}
-                >
-                  {wordbankImportingId === deck.deckId ? '追加中…' : '学習を始める'}
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {wordbankStatus && <p className="counter">{wordbankStatus}</p>}
       </div>
     </section>
   );
