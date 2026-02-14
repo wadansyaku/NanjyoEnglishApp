@@ -4,7 +4,25 @@ import { registerSW } from 'virtual:pwa-register';
 import App from './App';
 import './styles.css';
 
-registerSW({ immediate: true });
+async function setupServiceWorker() {
+  if (!('serviceWorker' in navigator)) {
+    return;
+  }
+
+  const registrations = await navigator.serviceWorker.getRegistrations();
+  await Promise.all(
+    registrations.map(async (registration) => {
+      const scopePath = new URL(registration.scope).pathname;
+      if (!scopePath.startsWith('/aiyume_english/')) {
+        await registration.unregister();
+      }
+    })
+  );
+
+  registerSW({ immediate: true });
+}
+
+void setupServiceWorker();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

@@ -2,7 +2,8 @@ name = "nanjyoenglishapp"
 main = "worker/index.ts"
 compatibility_date = "2026-02-01"
 routes = [
-  { pattern = "ai-yu-me.com/*", zone_name = "ai-yu-me.com" },
+  { pattern = "ai-yu-me.com/aiyume_english*", zone_name = "ai-yu-me.com" },
+  { pattern = "ai-yu-me.com/api/*", zone_name = "ai-yu-me.com" },
   { pattern = "www.ai-yu-me.com/*", zone_name = "ai-yu-me.com" }
 ]
 

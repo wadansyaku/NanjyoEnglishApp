@@ -5506,13 +5506,16 @@ const handleCommunityCompleteTask = async (
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    const canonicalHost = 'ai-yu-me.com';
+    if (url.hostname === 'www.ai-yu-me.com') {
+      const target = new URL(request.url);
+      target.hostname = canonicalHost;
+      return Response.redirect(target.toString(), 301);
+    }
     const appBasePath = '/aiyume_english';
     const legacyUiPrefixes = ['/scan', '/review', '/character', '/settings', '/admin', '/auth', '/test'];
 
     if (request.method === 'GET') {
-      if (url.pathname === '/') {
-        return Response.redirect(`${url.origin}${appBasePath}/`, 302);
-      }
       if (url.pathname === appBasePath) {
         return Response.redirect(`${url.origin}${appBasePath}/`, 302);
       }
@@ -5799,6 +5802,9 @@ export default {
       return env.ASSETS.fetch(new Request(rewrittenUrl.toString(), request));
     }
 
-    return env.ASSETS.fetch(request);
+    const marketingUrl = new URL(request.url);
+    marketingUrl.hostname = 'aiyume-web.pages.dev';
+    marketingUrl.protocol = 'https:';
+    return fetch(new Request(marketingUrl.toString(), request));
   }
 };
