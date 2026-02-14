@@ -30,12 +30,19 @@ type EvolutionStage = {
   image: string;
 };
 
+const toPublicAssetUrl = (fileName: string) => {
+  const base = import.meta.env.BASE_URL || '/';
+  const normalizedBase = base.endsWith('/') ? base : `${base}/`;
+  const normalizedFile = fileName.startsWith('/') ? fileName.slice(1) : fileName;
+  return `${normalizedBase}${normalizedFile}`;
+};
+
 const EVOLUTION_STAGES: EvolutionStage[] = [
-  { id: 'egg', name: 'たまご', minLevel: 1, color: '#FFE5B4', emoji: '🥚', description: 'まだ眠っているよ', image: '/evolution_egg.png' },
-  { id: 'chick', name: 'ひよこ', minLevel: 5, color: '#FFF59D', emoji: '🐣', description: '英語に目覚めた！', image: '/evolution_chick.png' },
-  { id: 'bird', name: 'ことり', minLevel: 15, color: '#81D4FA', emoji: '🐦', description: '羽ばたき始めた！', image: '/evolution_bird.png' },
-  { id: 'phoenix', name: 'フェニックス', minLevel: 30, color: '#FFAB91', emoji: '🔥', description: '炎のように輝く！', image: '/evolution_phoenix.png' },
-  { id: 'dragon', name: 'ドラゴン', minLevel: 50, color: '#CE93D8', emoji: '🐉', description: '伝説の領域へ！', image: '/evolution_dragon.png' }
+  { id: 'egg', name: 'たまご', minLevel: 1, color: '#FFE5B4', emoji: '🥚', description: 'まだ眠っているよ', image: toPublicAssetUrl('evolution_egg.png') },
+  { id: 'chick', name: 'ひよこ', minLevel: 5, color: '#FFF59D', emoji: '🐣', description: '英語に目覚めた！', image: toPublicAssetUrl('evolution_chick.png') },
+  { id: 'bird', name: 'ことり', minLevel: 15, color: '#81D4FA', emoji: '🐦', description: '羽ばたき始めた！', image: toPublicAssetUrl('evolution_bird.png') },
+  { id: 'phoenix', name: 'フェニックス', minLevel: 30, color: '#FFAB91', emoji: '🔥', description: '炎のように輝く！', image: toPublicAssetUrl('evolution_phoenix.png') },
+  { id: 'dragon', name: 'ドラゴン', minLevel: 50, color: '#CE93D8', emoji: '🐉', description: '伝説の領域へ！', image: toPublicAssetUrl('evolution_dragon.png') }
 ];
 
 const getEvolutionStage = (level: number): EvolutionStage => {
