@@ -3,6 +3,7 @@ import { client as webauthnClient } from '@passwordless-id/webauthn';
 import {
   AuthApiError,
   getAuth,
+  revokeCurrentSession,
   requestPasskeyLoginOptions,
   requestPasskeyRegisterOptions,
   verifyPasskeyLogin,
@@ -13,7 +14,7 @@ type AuthPageProps = {
   navigate: (to: string) => void;
 };
 
-type BusyState = 'idle' | 'register' | 'login';
+type BusyState = 'idle' | 'register' | 'login' | 'switch';
 
 const mapAuthError = (error: unknown) => {
   const authError = error as AuthApiError;
@@ -89,6 +90,21 @@ export const AuthPage = ({ navigate }: AuthPageProps) => {
     }
   };
 
+  const handleSwitchAccount = async () => {
+    if (busy !== 'idle') return;
+    setBusy('switch');
+    setError('');
+    setMessage('');
+    try {
+      await revokeCurrentSession();
+      setMessage('ログアウトしました。別アカウントでログインできます。');
+    } catch (err) {
+      setError(mapAuthError(err));
+    } finally {
+      setBusy('idle');
+    }
+  };
+
   if (auth?.isEmailVerified || auth?.authMethod === 'passkey') {
     return (
       <section className="section-grid">
@@ -99,7 +115,12 @@ export const AuthPage = ({ navigate }: AuthPageProps) => {
             <button type="button" className="pill" onClick={() => navigate('/review')}>
               復習へ進む
             </button>
+            <button type="button" className="secondary" onClick={() => void handleSwitchAccount()} disabled={busy !== 'idle'}>
+              {busy === 'switch' ? '切替中…' : '別アカウントでログイン'}
+            </button>
           </div>
+          {message && <p className="counter">{message}</p>}
+          {error && <p className="counter">{error}</p>}
         </div>
       </section>
     );

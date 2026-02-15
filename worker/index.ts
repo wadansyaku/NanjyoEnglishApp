@@ -5513,7 +5513,7 @@ export default {
       return Response.redirect(target.toString(), 301);
     }
     const appBasePath = '/aiyume_english';
-    const legacyUiPrefixes = ['/scan', '/review', '/character', '/settings', '/admin', '/auth', '/test'];
+    const legacyUiPrefixes = ['/scan', '/review', '/character', '/settings', '/admin', '/auth', '/login', '/test'];
 
     if (request.method === 'GET') {
       if (url.pathname === appBasePath) {

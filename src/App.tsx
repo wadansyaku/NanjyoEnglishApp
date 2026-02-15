@@ -28,15 +28,20 @@ type FeedbackType = 'ocr' | 'ux' | 'bug' | 'feature';
 type ToastLevel = ToastItem['type'];
 
 const makeToastId = () => Date.now() + Math.floor(Math.random() * 1000);
+const normalizeRoutePath = (value: string) => {
+  if (!value || value === '/') return '/';
+  return value.replace(/\/+$/, '') || '/';
+};
+const mapRouteAlias = (value: string) => (value === '/login' ? '/auth' : value);
 
 export default function App() {
   const { path, navigate } = usePath();
-  const normalizedPath = path === '/' ? '/review' : path;
+  const normalizedPath = normalizeRoutePath(path === '/' ? '/review' : path);
+  const routedPath = mapRouteAlias(normalizedPath);
   const auth = getAuth();
-  const isVerifiedLogin = auth?.isEmailVerified === true;
-  const isAuthRoute = normalizedPath === '/auth' || normalizedPath === '/auth/verify';
-  const isProtectedPath = normalizedPath === '/admin';
-  const effectivePath = !isVerifiedLogin && isProtectedPath ? '/auth' : normalizedPath;
+  const isVerifiedLogin = auth?.isEmailVerified === true || auth?.authMethod === 'passkey';
+  const isProtectedPath = routedPath === '/admin';
+  const effectivePath = !isVerifiedLogin && isProtectedPath ? '/auth' : routedPath;
 
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [feedbackOpen, setFeedbackOpen] = useState(false);
@@ -79,16 +84,16 @@ export default function App() {
   }, [path, navigate]);
 
   useEffect(() => {
+    if (normalizedPath === '/login') {
+      navigate('/auth');
+    }
+  }, [normalizedPath, navigate]);
+
+  useEffect(() => {
     if (!isVerifiedLogin && isProtectedPath) {
       navigate('/auth');
     }
   }, [isVerifiedLogin, isProtectedPath, navigate]);
-
-  useEffect(() => {
-    if (isAuthRoute && isVerifiedLogin) {
-      navigate('/review');
-    }
-  }, [isAuthRoute, isVerifiedLogin, navigate]);
 
   useEffect(() => {
     if (!feedbackOpen) return;
