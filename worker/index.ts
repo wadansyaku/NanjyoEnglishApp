@@ -5522,6 +5522,15 @@ export default {
       if (url.pathname === `${appBasePath}/`) {
         return Response.redirect(`${url.origin}${appBasePath}/auth${url.search}`, 302);
       }
+      if (url.pathname === `${appBasePath}/sw.js` || url.pathname === '/sw.js') {
+        const disableServiceWorkerScript = `self.addEventListener('install',()=>self.skipWaiting());self.addEventListener('activate',event=>{event.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.map(key=>caches.delete(key)));await self.registration.unregister();const clientsList=await self.clients.matchAll({type:'window',includeUncontrolled:true});for(const client of clientsList){client.navigate(client.url);}})());});`;
+        return new Response(disableServiceWorkerScript, {
+          headers: {
+            'content-type': 'application/javascript; charset=utf-8',
+            'cache-control': 'no-store'
+          }
+        });
+      }
       if (legacyUiPrefixes.some((prefix) => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`))) {
         return Response.redirect(`${url.origin}${appBasePath}${url.pathname}${url.search}`, 302);
       }
