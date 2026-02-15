@@ -13,7 +13,9 @@ async function setupServiceWorker() {
   await Promise.all(
     registrations.map(async (registration) => {
       const scopePath = new URL(registration.scope).pathname;
-      if (!scopePath.startsWith('/aiyume_english/')) {
+      const isEnglishScope =
+        scopePath === '/aiyume_english' || scopePath.startsWith('/aiyume_english/');
+      if (!isEnglishScope) {
         await registration.unregister();
       }
     })

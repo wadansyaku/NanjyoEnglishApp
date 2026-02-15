@@ -36,10 +36,11 @@ const mapRouteAlias = (value: string) => (value === '/login' ? '/auth' : value);
 
 export default function App() {
   const { path, navigate } = usePath();
-  const normalizedPath = normalizeRoutePath(path === '/' ? '/review' : path);
-  const routedPath = mapRouteAlias(normalizedPath);
   const auth = getAuth();
   const isVerifiedLogin = auth?.isEmailVerified === true || auth?.authMethod === 'passkey';
+  const defaultEntryPath = isVerifiedLogin ? '/review' : '/auth';
+  const normalizedPath = normalizeRoutePath(path === '/' ? defaultEntryPath : path);
+  const routedPath = mapRouteAlias(normalizedPath);
   const isProtectedPath = routedPath === '/admin';
   const effectivePath = !isVerifiedLogin && isProtectedPath ? '/auth' : routedPath;
 
@@ -79,9 +80,9 @@ export default function App() {
 
   useEffect(() => {
     if (path === '/') {
-      navigate('/review');
+      navigate(defaultEntryPath);
     }
-  }, [path, navigate]);
+  }, [defaultEntryPath, path, navigate]);
 
   useEffect(() => {
     if (normalizedPath === '/login') {

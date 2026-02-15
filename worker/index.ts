@@ -5517,7 +5517,10 @@ export default {
 
     if (request.method === 'GET') {
       if (url.pathname === appBasePath) {
-        return Response.redirect(`${url.origin}${appBasePath}/`, 302);
+        return Response.redirect(`${url.origin}${appBasePath}/auth${url.search}`, 302);
+      }
+      if (url.pathname === `${appBasePath}/`) {
+        return Response.redirect(`${url.origin}${appBasePath}/auth${url.search}`, 302);
       }
       if (legacyUiPrefixes.some((prefix) => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`))) {
         return Response.redirect(`${url.origin}${appBasePath}${url.pathname}${url.search}`, 302);
