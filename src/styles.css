@@ -93,6 +93,18 @@ main {
   gap: 12px;
 }
 
+.app-title-block {
+  display: grid;
+  gap: 2px;
+}
+
+.app-subtitle {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
 .app-header-actions {
   display: flex;
   flex-wrap: wrap;

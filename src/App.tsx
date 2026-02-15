@@ -31,11 +31,12 @@ const makeToastId = () => Date.now() + Math.floor(Math.random() * 1000);
 
 export default function App() {
   const { path, navigate } = usePath();
-  const normalizedPath = path === '/' ? '/scan' : path;
+  const normalizedPath = path === '/' ? '/review' : path;
   const auth = getAuth();
   const isVerifiedLogin = auth?.isEmailVerified === true;
   const isAuthRoute = normalizedPath === '/auth' || normalizedPath === '/auth/verify';
-  const effectivePath = !isAuthRoute && !isVerifiedLogin ? '/auth' : normalizedPath;
+  const isProtectedPath = normalizedPath === '/admin';
+  const effectivePath = !isVerifiedLogin && isProtectedPath ? '/auth' : normalizedPath;
 
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [feedbackOpen, setFeedbackOpen] = useState(false);
@@ -73,13 +74,19 @@ export default function App() {
 
   useEffect(() => {
     if (path === '/') {
-      navigate(isVerifiedLogin ? '/scan' : '/auth');
+      navigate('/review');
     }
-  }, [path, navigate, isVerifiedLogin]);
+  }, [path, navigate]);
 
   useEffect(() => {
-    if (!isAuthRoute && !isVerifiedLogin) {
+    if (!isVerifiedLogin && isProtectedPath) {
       navigate('/auth');
+    }
+  }, [isVerifiedLogin, isProtectedPath, navigate]);
+
+  useEffect(() => {
+    if (isAuthRoute && isVerifiedLogin) {
+      navigate('/review');
     }
   }, [isAuthRoute, isVerifiedLogin, navigate]);
 
@@ -235,7 +242,10 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="app-header app-header-compact">
-        <h1>AIYuMe English</h1>
+        <div className="app-title-block">
+          <h1>AIYuMe Learning English</h1>
+          <p className="app-subtitle">中学生向け単語帳アプリ</p>
+        </div>
         <div className="app-header-actions">
           <span className="badge badge-sm">{xpLabel}</span>
           {isVerifiedLogin ? (
@@ -251,22 +261,20 @@ export default function App() {
 
       <div className="app-content">{content}</div>
 
-      {isVerifiedLogin && (
-        <nav className="bottom-nav" aria-label="メインナビゲーション">
-          <Link className={`bottom-nav-item ${isScanActive ? 'active' : ''}`} to="/scan">
-            <span>📷</span>
-            <small>写真で単語</small>
-          </Link>
-          <Link className={`bottom-nav-item ${isReviewActive ? 'active' : ''}`} to="/review">
-            <span>📖</span>
-            <small>復習</small>
-          </Link>
-          <Link className={`bottom-nav-item ${isCharacterActive ? 'active' : ''}`} to="/character">
-            <span>⭐</span>
-            <small>がんばり記録</small>
-          </Link>
-        </nav>
-      )}
+      <nav className="bottom-nav" aria-label="メインナビゲーション">
+        <Link className={`bottom-nav-item ${isScanActive ? 'active' : ''}`} to="/scan">
+          <span>📷</span>
+          <small>写真で単語</small>
+        </Link>
+        <Link className={`bottom-nav-item ${isReviewActive ? 'active' : ''}`} to="/review">
+          <span>📖</span>
+          <small>復習</small>
+        </Link>
+        <Link className={`bottom-nav-item ${isCharacterActive ? 'active' : ''}`} to="/character">
+          <span>⭐</span>
+          <small>がんばり記録</small>
+        </Link>
+      </nav>
 
       <Modal open={feedbackOpen} onClose={() => setFeedbackOpen(false)} title="アプリへの意見">
         <p className="notice">名前・連絡先・本文の全文は書かず、短文で送ってください。</p>

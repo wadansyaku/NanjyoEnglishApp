@@ -145,6 +145,15 @@ export const AuthPage = ({ navigate }: AuthPageProps) => {
           {busy === 'login' ? 'ログイン中…' : '🔓 Passkeyでログイン'}
         </button>
 
+        <button
+          type="button"
+          className="pill"
+          style={{ marginTop: 12, width: '100%' }}
+          onClick={() => navigate('/review')}
+        >
+          ログインせずに単語帳を使う
+        </button>
+
         {message && <p className="counter">{message}</p>}
         {error && <p className="counter">{error}</p>}
       </div>

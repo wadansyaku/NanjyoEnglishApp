@@ -10,8 +10,9 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'icon.svg'],
       manifest: {
-        name: 'AIYuMe English',
-        short_name: 'AIYuMe',
+        name: 'AIYuMe Learning English',
+        short_name: 'AIYuMe English',
+        description: '中学生向けの英単語・復習アプリ',
         start_url: '/aiyume_english/',
         scope: '/aiyume_english/',
         display: 'standalone',
