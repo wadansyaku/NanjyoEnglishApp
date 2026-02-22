@@ -5803,6 +5803,13 @@ export default {
       return handleAiMeaningSuggest(request, env, auth);
     }
 
+    if (url.pathname === '/api/voidrush' || url.pathname.startsWith('/api/voidrush/')) {
+      const voidRushUrl = new URL(request.url);
+      voidRushUrl.hostname = 'aiyume-web.pages.dev';
+      voidRushUrl.protocol = 'https:';
+      return fetch(new Request(voidRushUrl.toString(), request));
+    }
+
     if (url.pathname.startsWith('/api/')) {
       return jsonResponse({ ok: false, message: 'Not found.' }, { status: 404 });
     }
